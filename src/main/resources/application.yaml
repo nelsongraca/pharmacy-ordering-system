@@ -1,0 +1,4 @@
+quarkus:
+  datasource:
+    devservices:
+      port: 5432
