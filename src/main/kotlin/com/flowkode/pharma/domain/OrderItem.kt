@@ -1,27 +1,39 @@
 package com.flowkode.pharma.domain
 
-import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanion
+import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanionBase
 import io.quarkus.hibernate.orm.panache.kotlin.PanacheEntityBase
 import jakarta.persistence.*
 
 @Entity
 @Table(name = "OrderItem")
-@IdClass(OrderItemId::class)
 class OrderItem : PanacheEntityBase {
 
-    companion object : PanacheCompanion<OrderItem> {
+    companion object : PanacheCompanionBase<OrderItem, OrderItemId> {
 
     }
 
-    @Id
+    @EmbeddedId
+    var id: OrderItemId = OrderItemId()
+
     @ManyToOne(optional = false)
+    @MapsId("orderId")
+    @JoinColumn(name = "order_id")
     lateinit var order: Order
 
-    @Id
-    @ManyToOne
+    @ManyToOne(optional = false)
+    @MapsId("medicationId")
+    @JoinColumn(name = "medication_id")
     lateinit var medication: Medication
 
-    @Column(name="amount")
+    @Column(name = "amount")
     var amount: Long = 0
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is OrderItem) return false
+        return id == other.id
+    }
+
+    override fun hashCode(): Int = id.hashCode()
 
 }

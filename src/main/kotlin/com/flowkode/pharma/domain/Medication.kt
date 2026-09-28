@@ -21,5 +21,13 @@ class Medication : PanacheEntity() {
 
     var reserved: Long = 0
 
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is Medication) return false
+        return id != null && id == other.id
+    }
+
+    override fun hashCode(): Int = id?.hashCode() ?: 0
+
 
 }

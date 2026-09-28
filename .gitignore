@@ -43,3 +43,6 @@ nb-configuration.xml
 /.quarkus/cli/plugins/
 # TLS Certificates
 .certs/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/

@@ -1,0 +1,33 @@
+{#include base}
+    {#body}
+        <main class="container" id="kiosk">
+
+            {! Shown on first load, after an error, and after the ticket auto-reset !}
+            {#fragment id=form}
+                <form hx-post="/orders" hx-target="#kiosk" hx-swap="innerHTML" hx-disabled-elt="find button">
+                    <h1>Enter your prescription number</h1>
+                    <input name="code"
+                           value="{view.code ?: ''}"
+                           placeholder="P-12345"
+                           required autofocus autocomplete="off" maxlength="12"
+                           pattern="[Pp]-[0-9][0-9][0-9][0-9][0-9]"
+                           title="Prescription numbers look like P-12345"
+                           {#if view.error}aria-invalid="true" aria-describedby="code-error"{/if}>
+                    {#if view.error}<small id="code-error">{view.error}</small>{/if}
+                    <button>Get my number</button>
+                </form>
+            {/fragment}
+
+            {! Only rendered on demand; swaps itself back to the form after 10 seconds !}
+            {#fragment id=ticket}
+                {#if view.number}
+                    <article hx-get="/kiosk/form" hx-trigger="load delay:5s" hx-target="#kiosk" hx-swap="innerHTML">
+                        <h1>Your number is {view.number}</h1>
+                        <p>Watch the board. We will call you.</p>
+                    </article>
+                {/if}
+            {/fragment}
+
+        </main>
+    {/body}
+{/include}

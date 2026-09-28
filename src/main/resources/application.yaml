@@ -2,3 +2,24 @@ quarkus:
   datasource:
     devservices:
       port: 5432
+
+mp:
+  messaging:
+    outgoing:
+      approval:
+        connector: smallrye-rabbitmq
+        exchange:
+          name: orders
+        routing-key: orders.approval
+
+"%test":
+  mp:
+    messaging:
+      incoming:
+        approval-test:
+          connector: smallrye-rabbitmq
+          queue:
+            name: orders.approval.test
+          exchange:
+            name: orders
+          routing-key: orders.approval

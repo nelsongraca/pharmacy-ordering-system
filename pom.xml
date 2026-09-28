@@ -53,9 +53,8 @@
             <artifactId>quarkus-config-yaml</artifactId>
         </dependency>
         <dependency>
-            <groupId>io.quarkiverse.rabbitmqclient</groupId>
-            <artifactId>quarkus-rabbitmq-client</artifactId>
-            <version>3.4.0</version>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-messaging-rabbitmq</artifactId>
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>

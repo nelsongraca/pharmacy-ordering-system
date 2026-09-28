@@ -1,15 +1,48 @@
 package com.flowkode.pharma.service
 
+import com.flowkode.pharma.domain.Medication
+import com.flowkode.pharma.domain.Order
+import com.flowkode.pharma.domain.OrderItem
+import com.flowkode.pharma.domain.PrescriptionStatus
+import io.quarkus.narayana.jta.QuarkusTransaction
 import io.quarkus.test.junit.QuarkusTest
 import jakarta.inject.Inject
+import jakarta.transaction.Transactional
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 @QuarkusTest
 class OrderServiceTest {
 
     @Inject
     lateinit var orderService: OrderService
+
+    @Inject
+    lateinit var approvalConsumer: ApprovalTestConsumer
+
+    private val seededStock = mapOf(1L to 5L, 2L to 10L, 3L to 15L, 4L to 20L, 5L to 25L)
+
+    @BeforeEach
+    fun reset() {
+        QuarkusTransaction.requiringNew()
+            .run {
+                OrderItem.deleteAll()
+                Order.deleteAll()
+                seededStock.forEach { (id, stock) ->
+                    Medication.findById(id)!!
+                        .apply {
+                            this.stock = stock
+                            reserved = 0
+                        }
+                }
+            }
+        approvalConsumer.received.clear()
+    }
 
     @Test
     fun onlyValidNumber() {
@@ -20,4 +53,99 @@ class OrderServiceTest {
         assertEquals("Invalid prescription number", ex.message)
     }
 
+    @Test
+    fun allZeroNumberIsInvalid() {
+        assertThrows(IllegalArgumentException::class.java) {
+            orderService.order("P-00000")
+        }
+    }
+
+    @Test
+    @Transactional
+    fun validPrescriptionReservesStockAndCreatesOrder() {
+        val result = orderService.order("P-10000")
+
+        assertTrue(result is OrderResult.Placed)
+
+        assertEquals(1L, Medication.findById(1L)!!.reserved)
+        assertEquals(5L, Medication.findById(1L)!!.stock)
+
+        val order = Order.findById((result as OrderResult.Placed).ticket)!!
+        assertEquals(PrescriptionStatus.AWAITING_APPROVAL, order.status)
+        assertEquals(1, order.items.size)
+        assertEquals(1L, order.items[0].amount)
+    }
+
+    @Test
+    @Transactional
+    fun shortageLeavesNothingReservedAndRecordsOutOfStock() {
+        val result = orderService.order("P-90000") // 9 Amoxicillin, only 5 on hand
+
+        assertEquals(OrderResult.OutOfStock(1L), result)
+        assertEquals(0L, Medication.findById(1L)!!.reserved)
+        assertEquals(1L, Order.count("status = ?1", PrescriptionStatus.OUT_OF_STOCK))
+    }
+
+    @Test
+    fun reservationIsAllOrNothing() {
+        QuarkusTransaction.requiringNew()
+            .run { Medication.findById(2L)!!.stock = 8L }
+
+        val result = orderService.order("P-19000") // 1 Amoxicillin (ok) + 9 Ibuprofen (only 8)
+
+        assertEquals(OrderResult.OutOfStock(2L), result)
+        QuarkusTransaction.requiringNew()
+            .run {
+                assertEquals(0L, Medication.findById(1L)!!.reserved)
+                assertEquals(0L, Medication.findById(2L)!!.reserved)
+            }
+    }
+
+    @Test
+    fun placesMessageOnApprovalQueue() {
+        val result = orderService.order("P-10000") as OrderResult.Placed
+
+        assertEquals("""{"orderId":${result.ticket}}""", awaitApproval())
+    }
+
+    private fun awaitApproval(): String {
+        val deadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < deadline) {
+            approvalConsumer.received.firstOrNull()?.let { return it }
+            Thread.sleep(50)
+        }
+        fail<String>("no message on orders.approval")
+        error("unreachable")
+    }
+
+    @Test
+    fun lastBoxRaceOnlyOneOrderWins() {
+        QuarkusTransaction.requiringNew()
+            .run { Medication.findById(1L)!!.stock = 1L }
+
+        val threads = 10
+        val pool = Executors.newFixedThreadPool(threads)
+        val latch = CountDownLatch(1)
+        try {
+            val futures = (1..threads).map {
+                pool.submit(Callable {
+                    latch.await()
+                    orderService.order("P-10000")
+                })
+            }
+            latch.countDown()
+            val results = futures.map { it.get(30, TimeUnit.SECONDS) }
+
+            assertEquals(1, results.count { it is OrderResult.Placed })
+            assertEquals(9, results.count { it is OrderResult.OutOfStock })
+        }
+        finally {
+            pool.shutdown()
+        }
+
+        QuarkusTransaction.requiringNew()
+            .run {
+                assertEquals(1L, Medication.findById(1L)!!.reserved)
+            }
+    }
 }
