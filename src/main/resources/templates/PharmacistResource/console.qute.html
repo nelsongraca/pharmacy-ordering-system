@@ -1,0 +1,24 @@
+{#include base}
+    {#body}
+        <main class="container" id="pharmacist">
+            <h1>Pharmacist console</h1>
+
+            <form method="get" action="/pharmacist">
+                <label>Role
+                    <select name="role" onchange="this.form.submit()">
+                        <option value="APPROVALS" {#if view.role == 'APPROVALS'}selected{/if}>Approvals</option>
+                        <option value="DELIVERIES" {#if view.role == 'DELIVERIES'}selected{/if}>Deliveries</option>
+                        <option value="BOTH" {#if view.role == 'BOTH'}selected{/if}>Both</option>
+                    </select>
+                </label>
+                <noscript><button>Show</button></noscript>
+            </form>
+
+            <button hx-post="/pharmacist/take?role={view.role}" hx-target="#card" hx-swap="innerHTML">Take next</button>
+
+            <div id="counts" hx-get="/pharmacist/counts?role={view.role}" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
+
+            <div id="card">No order yet. Press "Take next".</div>
+        </main>
+    {/body}
+{/include}

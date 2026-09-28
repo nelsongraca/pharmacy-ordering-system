@@ -46,7 +46,7 @@ class KioskResource(private val orderService: OrderService) {
     fun submit(@FormParam("code") code: String?): TemplateInstance {
         val input = code?.trim().orEmpty()
         return try {
-            when (val result = orderService.order(input)) {
+            when (val result = orderService.create(input)) {
                 is OrderResult.Placed ->
                     Templates.`kiosk$ticket`(KioskView(number = result.ticket))
                 is OrderResult.OutOfStock ->

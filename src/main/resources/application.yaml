@@ -6,20 +6,20 @@ quarkus:
 mp:
   messaging:
     outgoing:
-      approval:
+      packaging:
         connector: smallrye-rabbitmq
         exchange:
           name: orders
-        routing-key: orders.approval
+        routing-key: orders.packaging
 
 "%test":
   mp:
     messaging:
       incoming:
-        approval-test:
+        packaging-test:
           connector: smallrye-rabbitmq
           queue:
-            name: orders.approval.test
+            name: orders.packaging.test
           exchange:
             name: orders
-          routing-key: orders.approval
+          routing-key: orders.packaging

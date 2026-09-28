@@ -1,0 +1,16 @@
+{#if view.message}
+    <p>{view.message}</p>
+{/if}
+{#if view.card}
+    <article>
+        <h2>Ticket {view.card.id}</h2>
+        <p>{view.card.code} — {view.card.status}</p>
+        <ul>
+            {#for line in view.card.lines}
+                <li>{line.medication} × {line.amount}</li>
+            {/for}
+        </ul>
+        <button hx-post="/pharmacist/approve/{view.card.id}" hx-target="#card" hx-swap="innerHTML">Approve</button>
+        <button hx-post="/pharmacist/reject/{view.card.id}" hx-target="#card" hx-swap="innerHTML">Reject</button>
+    </article>
+{/if}

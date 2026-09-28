@@ -12,6 +12,14 @@ class Medication : PanacheEntity() {
 
     companion object : PanacheCompanion<Medication> {
 
+        /** Reserves stock atomically. False means not enough on hand (or unknown medication). */
+        fun reserve(id: Long, quantity: Long): Boolean =
+            update("reserved = reserved + ?1 where id = ?2 and stock - reserved >= ?1", quantity, id) == 1
+
+        /** Returns previously reserved stock. */
+        fun release(id: Long, quantity: Long) {
+            update("reserved = reserved - ?1 where id = ?2", quantity, id)
+        }
     }
 
     @Column(unique = true)
