@@ -27,6 +27,9 @@ class FailureHandlingTest {
     @Inject
     lateinit var deadLetterService: DeadLetterService
 
+    @Suppress("PropertyName")
+    private val WHO = "tester"
+
     private val seededStock = mapOf(1L to 5L, 2L to 10L, 3L to 15L, 4L to 20L, 5L to 25L)
 
     @BeforeEach
@@ -62,7 +65,7 @@ class FailureHandlingTest {
     @Test
     fun packagerFailureEndsFailedAndReleasesStockOnce() {
         val ticket = (orderService.create("P-00009") as OrderResult.Placed).ticket // 9 of medication 5
-        orderService.claimNext(PharmacistRole.APPROVALS)
+        orderService.claimNext(PharmacistRole.APPROVALS, WHO)
         orderService.approve(ticket)
 
         assertThrows(IllegalStateException::class.java) {

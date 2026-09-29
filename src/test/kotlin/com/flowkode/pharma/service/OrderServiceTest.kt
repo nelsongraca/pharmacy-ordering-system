@@ -23,6 +23,9 @@ class OrderServiceTest {
     @Inject
     lateinit var packagingConsumer: PackagingTestConsumer
 
+    @Suppress("PropertyName")
+    private val WHO = "tester"
+
     private val seededStock = mapOf(1L to 5L, 2L to 10L, 3L to 15L, 4L to 20L, 5L to 25L)
 
     @BeforeEach
@@ -151,9 +154,9 @@ class OrderServiceTest {
         val first = (orderService.create("P-10000") as OrderResult.Placed).ticket
         val second = (orderService.create("P-20000") as OrderResult.Placed).ticket
 
-        assertEquals(first, orderService.claimNext(PharmacistRole.APPROVALS))
-        assertEquals(second, orderService.claimNext(PharmacistRole.APPROVALS))
-        assertNull(orderService.claimNext(PharmacistRole.APPROVALS))
+        assertEquals(first, orderService.claimNext(PharmacistRole.APPROVALS, WHO))
+        assertEquals(second, orderService.claimNext(PharmacistRole.APPROVALS, WHO))
+        assertNull(orderService.claimNext(PharmacistRole.APPROVALS, WHO))
     }
 
     @Test
@@ -169,7 +172,7 @@ class OrderServiceTest {
             val futures = (1..threads).map {
                 pool.submit(Callable {
                     latch.await()
-                    orderService.claimNext(PharmacistRole.APPROVALS)
+                    orderService.claimNext(PharmacistRole.APPROVALS, WHO)
                 })
             }
             latch.countDown()
@@ -186,7 +189,7 @@ class OrderServiceTest {
     @Test
     fun approveMovesToPackagingAndPublishes() {
         val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
-        assertEquals(ticket, orderService.claimNext(PharmacistRole.APPROVALS))
+        assertEquals(ticket, orderService.claimNext(PharmacistRole.APPROVALS, WHO))
 
         assertTrue(orderService.approve(ticket))
 
@@ -197,7 +200,7 @@ class OrderServiceTest {
     @Test
     fun rejectReleasesStockExactlyOnce() {
         val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
-        orderService.claimNext(PharmacistRole.APPROVALS)
+        orderService.claimNext(PharmacistRole.APPROVALS, WHO)
 
         assertTrue(orderService.reject(ticket))
         assertFalse(orderService.reject(ticket))
@@ -213,28 +216,28 @@ class OrderServiceTest {
         val ready = readyOrder("P-01000")
         orderService.create("P-10000") // waits for approvals
 
-        assertEquals(ready, orderService.claimNext(PharmacistRole.BOTH))
+        assertEquals(ready, orderService.claimNext(PharmacistRole.BOTH, WHO))
     }
 
     @Test
     fun deliveriesRoleIgnoresApprovals() {
         orderService.create("P-10000")
 
-        assertNull(orderService.claimNext(PharmacistRole.DELIVERIES))
+        assertNull(orderService.claimNext(PharmacistRole.DELIVERIES, WHO))
     }
 
     @Test
     fun approvalsRoleIgnoresReady() {
         readyOrder("P-10000")
 
-        assertNull(orderService.claimNext(PharmacistRole.APPROVALS))
+        assertNull(orderService.claimNext(PharmacistRole.APPROVALS, WHO))
     }
 
     @Test
     fun samePrescriptionCanBeOrderedAgainAfterItCompletes() {
         val first = readyOrder("P-10000")
-        assertEquals(first, orderService.claimNext(PharmacistRole.DELIVERIES))
-        assertTrue(orderService.handover(first))
+        assertEquals(first, orderService.claimNext(PharmacistRole.DELIVERIES, WHO))
+        assertTrue(orderService.handover(first, WHO))
 
         assertTrue(orderService.create("P-10000") is OrderResult.Placed)
     }
@@ -242,9 +245,10 @@ class OrderServiceTest {
     @Test
     fun callIsIdempotent() {
         val ticket = readyOrder("P-10000")
+        assertEquals(ticket, orderService.claimNext(PharmacistRole.DELIVERIES, WHO)) // must hold it first
 
-        assertTrue(orderService.call(ticket))
-        assertFalse(orderService.call(ticket))
+        assertTrue(orderService.call(ticket, WHO))
+        assertFalse(orderService.call(ticket, WHO))
     }
 
     @Test
@@ -261,10 +265,58 @@ class OrderServiceTest {
     @Test
     fun approveAfterRejectIsANoOp() {
         val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
-        orderService.claimNext(PharmacistRole.APPROVALS)
+        orderService.claimNext(PharmacistRole.APPROVALS, WHO)
 
         assertTrue(orderService.reject(ticket))
         assertFalse(orderService.approve(ticket))
+    }
+
+    @Test
+    fun claimIsDurableAndSkippedByTheNextClaim() {
+        val ticket = readyOrder("P-10000")
+
+        assertEquals(ticket, orderService.claimNext(PharmacistRole.DELIVERIES, WHO))
+        // a second take skips the order already held (claimedBy is not null)
+        assertNull(orderService.claimNext(PharmacistRole.DELIVERIES, "someone-else"))
+
+        transactional {
+            val order = Order.findById(ticket)!!
+            assertEquals(WHO, order.claimedBy)
+            assertEquals(PrescriptionStatus.READY, order.status) // claiming a delivery keeps it READY
+        }
+    }
+
+    @Test
+    fun heldByReturnsTheOrderThePharmacistHolds() {
+        val ticket = readyOrder("P-10000")
+        assertEquals(ticket, orderService.claimNext(PharmacistRole.DELIVERIES, WHO))
+
+        assertEquals(ticket, orderService.heldBy(WHO))
+        assertNull(orderService.heldBy("someone-else"))
+    }
+
+    @Test
+    fun handoverOnlyWorksForTheHolder() {
+        val ticket = readyOrder("P-10000")
+        assertEquals(ticket, orderService.claimNext(PharmacistRole.DELIVERIES, WHO))
+
+        assertFalse(orderService.handover(ticket, "someone-else"))
+        assertTrue(orderService.handover(ticket, WHO))
+
+        transactional { assertNull(Order.findById(ticket)!!.claimedBy) } // cleared on completion
+    }
+
+    @Test
+    fun approvingClearsTheApprovalClaim() {
+        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        orderService.claimNext(PharmacistRole.APPROVALS, WHO)
+
+        assertTrue(orderService.approve(ticket))
+
+        transactional {
+            assertEquals(PrescriptionStatus.PACKAGING, Order.findById(ticket)!!.status)
+            assertNull(Order.findById(ticket)!!.claimedBy)
+        }
     }
 
     private fun readyOrder(code: String): Long {

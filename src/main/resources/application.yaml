@@ -58,6 +58,9 @@ mp:
         port: 5432
 
 "%test":
+  quarkus:
+    scheduler:
+      enabled: false # tests drive Republisher.republishStalled() directly
   mp:
     messaging:
       incoming:

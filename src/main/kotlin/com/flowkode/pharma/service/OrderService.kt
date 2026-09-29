@@ -64,15 +64,19 @@ class OrderService(
         }
 
     // get next from db, based on the role the pharmacist works
-    fun claimNext(role: PharmacistRole): Long? =
+    fun claimNext(role: PharmacistRole, by: String): Long? =
         transactional {
             when (role) {
-                PharmacistRole.APPROVALS  -> Order.claimOldest(PrescriptionStatus.IN_REVIEW, PrescriptionStatus.AWAITING_APPROVAL)
-                PharmacistRole.DELIVERIES -> Order.claimOldest(null, PrescriptionStatus.READY) //todo: claim is not persisted; consider claimed_by/claimed_at (see notes.md)
-                PharmacistRole.BOTH       -> Order.claimOldest(null, PrescriptionStatus.READY) //todo: same, see above
-                    ?: Order.claimOldest(PrescriptionStatus.IN_REVIEW, PrescriptionStatus.AWAITING_APPROVAL)
+                PharmacistRole.APPROVALS  -> Order.claimOldest(by, PrescriptionStatus.IN_REVIEW, PrescriptionStatus.AWAITING_APPROVAL)
+                PharmacistRole.DELIVERIES -> Order.claimOldest(by, null, PrescriptionStatus.READY)
+                PharmacistRole.BOTH       -> Order.claimOldest(by, null, PrescriptionStatus.READY)
+                    ?: Order.claimOldest(by, PrescriptionStatus.IN_REVIEW, PrescriptionStatus.AWAITING_APPROVAL)
             }
         }
+
+    /** The order this pharmacist is holding, if any. They take one at a time. */
+    fun heldBy(by: String): Long? =
+        transactional { Order.heldBy(by)?.id }
 
     fun countWaiting(role: PharmacistRole): Long =
         transactional {
@@ -88,14 +92,19 @@ class OrderService(
         if (!approved) return false
 
         statusPublisher.publish(id, PrescriptionStatus.PACKAGING)
+        publishPackaging(id)
+        return true
+    }
 
+    /** Send the packaging work message and record it, so the republisher can recover if it is lost. */
+    fun publishPackaging(id: Long) {
         try {
             packaging.send(OrderPayload(id))
+            transactional { Order.markPublished(id) }
         }
         catch (ex: Exception) {
             log.errorf(ex, "Failed to publish packaging for order %d", id)
         }
-        return true
     }
 
     fun reject(id: Long): Boolean {
@@ -110,9 +119,9 @@ class OrderService(
         return rejected
     }
 
-    fun handover(id: Long): Boolean {
+    fun handover(id: Long, by: String): Boolean {
         val completed = transactional {
-            if (!Order.doTransition(id, PrescriptionStatus.READY, PrescriptionStatus.COMPLETED)) return@transactional false
+            if (!Order.completeFromReady(id, by)) return@transactional false
 
             stockService.consume(Order.findById(id)!!)
             true
@@ -123,8 +132,8 @@ class OrderService(
     }
 
     /** READY stays READY; we only record that the ticket number was called out (board highlights it briefly). */
-    fun call(id: Long): Boolean {
-        val called = transactional { Order.markCalled(id) }
+    fun call(id: Long, by: String): Boolean {
+        val called = transactional { Order.markCalled(id, by) }
         if (called) statusPublisher.publish(id, PrescriptionStatus.READY)
         return called
     }

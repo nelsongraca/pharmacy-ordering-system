@@ -12,18 +12,22 @@ class Order : PanacheEntityBase {
     companion object : PanacheCompanion<Order> {
 
         /**
-         * Locks the oldest order in any of [status] (oldest ticket first) and, when [target] is given,
-         * moves it there. A null [target] claims without changing status (delivery keeps READY).
-         * The write lock serializes concurrent claims so two pharmacists never take the same order.
+         * Locks the oldest order in any of [status] (oldest ticket first) and claims it for [by]:
+         * stamps `claimedBy`/`claimedAt`, and when [target] is given also moves the status.
+         * A null [target] claims without changing status (delivery keeps READY).
+         * `claimedBy is null` means only unclaimed orders are taken, so a second "Take next"
+         * cannot hand out an order already held. The write lock serializes concurrent claims.
          */
-        fun claimOldest(target: PrescriptionStatus?, vararg status: PrescriptionStatus): Long? {
+        fun claimOldest(by: String, target: PrescriptionStatus?, vararg status: PrescriptionStatus): Long? {
             //ids are sequential so we can order by id, ideally we use an update date so we process the ones that changed more time ago
             //todo: add date for ordering and audit
-            val order = find("status in ?1 order by id", status.toList())
+            val order = find("status in ?1 and claimedBy is null order by id", status.toList())
                 .withLock(LockModeType.PESSIMISTIC_WRITE) //also not a big fan of these for large scale cann be a problem
                 .firstResult()
                 ?: return null
 
+            order.claimedBy = by
+            order.claimedAt = Instant.now()
             if (target != null) {
                 order.status = target
                 order.statusChangedAt = Instant.now()
@@ -31,10 +35,15 @@ class Order : PanacheEntityBase {
             return order.id
         }
 
+        /** The order a pharmacist is currently holding, if any (one at a time). */
+        fun heldBy(by: String): Order? =
+            find("claimedBy = ?1 and status in ?2 order by id", by, listOf(PrescriptionStatus.IN_REVIEW, PrescriptionStatus.READY))
+                .firstResult()
+
 
         fun doTransition(id: Long, from: PrescriptionStatus, to: PrescriptionStatus): Boolean {
             return update(
-                "status = ?1, statusChangedAt = ?2 where id = ?3 and status = ?4",
+                "status = ?1, statusChangedAt = ?2, claimedBy = null, claimedAt = null where id = ?3 and status = ?4",
                 to,
                 Instant.now(),
                 id,
@@ -45,7 +54,7 @@ class Order : PanacheEntityBase {
 
         fun rejectFromReview(id: Long): Boolean =
             update(
-                "status = ?1, stockReleased = true, statusChangedAt = ?2 where id = ?3 and status = ?4 and stockReleased = false",
+                "status = ?1, stockReleased = true, statusChangedAt = ?2, claimedBy = null, claimedAt = null where id = ?3 and status = ?4 and stockReleased = false",
                 PrescriptionStatus.REJECTED,
                 Instant.now(),
                 id,
@@ -55,20 +64,32 @@ class Order : PanacheEntityBase {
         /** Packager gave up: PACKAGING -> FAILED, releasing stock at most once (guarded by [stockReleased]). */
         fun failFromPackaging(id: Long): Boolean =
             update(
-                "status = ?1, stockReleased = true, statusChangedAt = ?2 where id = ?3 and status = ?4 and stockReleased = false",
+                "status = ?1, stockReleased = true, statusChangedAt = ?2, claimedBy = null, claimedAt = null where id = ?3 and status = ?4 and stockReleased = false",
                 PrescriptionStatus.FAILED,
                 Instant.now(),
                 id,
                 PrescriptionStatus.PACKAGING,
             ) == 1
 
-        /** READY -> READY (called): remember that this ticket was called out, at most once. */
-        fun markCalled(id: Long): Boolean =
+        /** READY -> COMPLETED, but only for the pharmacist holding the order. Clears the claim. */
+        fun completeFromReady(id: Long, by: String): Boolean =
             update(
-                "calledAt = ?1 where id = ?2 and status = ?3 and calledAt is null",
+                "status = ?1, statusChangedAt = ?2, claimedBy = null, claimedAt = null where id = ?3 and status = ?4 and claimedBy = ?5",
+                PrescriptionStatus.COMPLETED,
                 Instant.now(),
                 id,
                 PrescriptionStatus.READY,
+                by,
+            ) == 1
+
+        /** READY -> READY (called) for the holder: remember that this ticket was called out, at most once. */
+        fun markCalled(id: Long, by: String): Boolean =
+            update(
+                "calledAt = ?1 where id = ?2 and status = ?3 and claimedBy = ?4 and calledAt is null",
+                Instant.now(),
+                id,
+                PrescriptionStatus.READY,
+                by,
             ) == 1
 
         /** A problem order -> dismissed: hides it from the board, at most once. */
@@ -83,6 +104,22 @@ class Order : PanacheEntityBase {
                     PrescriptionStatus.FAILED,
                 ),
             ) == 1
+
+        /** Records that a work message was published for this order, so the republisher can spot stalls. */
+        fun markPublished(id: Long) {
+            update("lastPublishedAt = ?1 where id = ?2", Instant.now(), id)
+        }
+
+        /**
+         * PACKAGING orders whose work message may have been lost: not published recently.
+         * The republisher re-sends them; the packager skips anything already moved.
+         */
+        fun stalled(since: Instant): List<Order> =
+            list(
+                "status = ?1 and (lastPublishedAt is null or lastPublishedAt < ?2) order by id",
+                PrescriptionStatus.PACKAGING,
+                since,
+            )
 
         fun countByStatus(vararg status: PrescriptionStatus): Long {
             return count("status in ?1", status.asList())
@@ -128,6 +165,13 @@ class Order : PanacheEntityBase {
     var statusChangedAt: Instant = Instant.now()
     var calledAt: Instant? = null
     var dismissedAt: Instant? = null
+
+    /** Who currently holds this order (approvals review or delivery). Cleared on the next transition. */
+    var claimedBy: String? = null
+    var claimedAt: Instant? = null
+
+    /** When we last published a work message (packaging) for this order; drives the republisher. */
+    var lastPublishedAt: Instant? = null
 
     @OneToMany(mappedBy = "order", cascade = [CascadeType.ALL], orphanRemoval = true)
     var items: MutableList<OrderItem> = mutableListOf()

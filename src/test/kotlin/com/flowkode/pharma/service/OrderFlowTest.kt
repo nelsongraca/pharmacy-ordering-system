@@ -19,6 +19,9 @@ class OrderFlowTest {
     @Inject
     lateinit var packagerService: PackagerService
 
+    @Suppress("PropertyName")
+    private val WHO = "tester"
+
     private val seededStock = mapOf(1L to 5L, 2L to 10L, 3L to 15L, 4L to 20L, 5L to 25L)
 
     @BeforeEach
@@ -41,14 +44,14 @@ class OrderFlowTest {
     fun happyPathPacksAndHandsOver() {
         val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
 
-        assertEquals(ticket, orderService.claimNext(PharmacistRole.APPROVALS))
+        assertEquals(ticket, orderService.claimNext(PharmacistRole.APPROVALS, WHO))
         assertTrue(orderService.approve(ticket))
         assertTrue(transactional {
             Order.doTransition(ticket, PrescriptionStatus.PACKAGING, PrescriptionStatus.READY)
         })
 
-        assertEquals(ticket, orderService.claimNext(PharmacistRole.DELIVERIES))
-        assertTrue(orderService.handover(ticket))
+        assertEquals(ticket, orderService.claimNext(PharmacistRole.DELIVERIES, WHO))
+        assertTrue(orderService.handover(ticket, WHO))
 
         transactional {
             assertEquals(PrescriptionStatus.COMPLETED, Order.findById(ticket)!!.status)
@@ -60,7 +63,7 @@ class OrderFlowTest {
     @Test
     fun duplicatePackagingMessageChangesNothing() {
         val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
-        orderService.claimNext(PharmacistRole.APPROVALS)
+        orderService.claimNext(PharmacistRole.APPROVALS, WHO)
         orderService.approve(ticket)
 
         assertTrue(transactional {
@@ -76,14 +79,16 @@ class OrderFlowTest {
     @Test
     fun handoverOnAReadyOrderConsumesStockOnlyOnce() {
         val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
-        orderService.claimNext(PharmacistRole.APPROVALS)
+        orderService.claimNext(PharmacistRole.APPROVALS, WHO)
         orderService.approve(ticket)
         transactional {
             Order.doTransition(ticket, PrescriptionStatus.PACKAGING, PrescriptionStatus.READY)
         }
 
-        assertTrue(orderService.handover(ticket))
-        assertFalse(orderService.handover(ticket))
+        // the delivery pharmacist must claim it before it can be handed over
+        assertEquals(ticket, orderService.claimNext(PharmacistRole.DELIVERIES, WHO))
+        assertTrue(orderService.handover(ticket, WHO))
+        assertFalse(orderService.handover(ticket, WHO))
 
         transactional { assertEquals(4L, Medication.findById(1L)!!.stock) }
     }
@@ -92,7 +97,7 @@ class OrderFlowTest {
     @Test
     fun countByStatusHandlesOneAndManyStatuses() {
         val ready = (orderService.create("P-20000") as OrderResult.Placed).ticket
-        assertEquals(ready, orderService.claimNext(PharmacistRole.APPROVALS))
+        assertEquals(ready, orderService.claimNext(PharmacistRole.APPROVALS, WHO))
         orderService.approve(ready)
         transactional {
             Order.doTransition(ready, PrescriptionStatus.PACKAGING, PrescriptionStatus.READY)

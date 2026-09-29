@@ -18,10 +18,12 @@ data class Attention(val id: Long, val status: String, val lines: List<OrderLine
 
 data class PharmacistView(
     val role: String = PharmacistRole.APPROVALS.name,
+    val who: String = "pharmacist",
     val waiting: Long = 0,
     val card: OrderCard? = null,
     val message: String? = null,
     val attention: List<Attention> = emptyList(),
+    val holding: Boolean = false,
 )
 
 @Path("/pharmacist")
@@ -46,27 +48,38 @@ class PharmacistResource(private val orderService: OrderService) {
     }
 
     @GET
-    fun index(@QueryParam("role") role: String?): TemplateInstance {
+    fun index(@QueryParam("role") role: String?, @QueryParam("who") who: String?): TemplateInstance {
         val parsed = role(role)
+        val name = who(who)
         return Templates.console(
-            PharmacistView(role = parsed.name, waiting = orderService.countWaiting(parsed), attention = attention()),
+            PharmacistView(
+                role = parsed.name,
+                who = name,
+                waiting = orderService.countWaiting(parsed),
+                attention = attention(),
+                holding = orderService.heldBy(name) != null,
+            ),
         )
     }
 
     @POST
     @Path("take")
-    fun take(@QueryParam("role") role: String?): TemplateInstance {
+    fun take(@QueryParam("role") role: String?, @QueryParam("who") who: String?): TemplateInstance {
         val parsed = role(role)
-        val id = orderService.claimNext(parsed)
+        val name = who(who)
+
+        // one order at a time: if already holding one, show it again instead of taking another
+        val held = orderService.heldBy(name)
+        val id = held ?: orderService.claimNext(parsed, name)
 
         if (id == null)
-            return Templates.card(PharmacistView(role = parsed.name, message = "No orders waiting."))
+            return Templates.card(PharmacistView(role = parsed.name, who = name, message = "No orders waiting."))
 
         val card = cardFor(id)
         if (card == null)
-            return Templates.card(PharmacistView(role = parsed.name, message = "That order disappeared."))
+            return Templates.card(PharmacistView(role = parsed.name, who = name, message = "That order disappeared."))
 
-        return Templates.card(PharmacistView(role = parsed.name, card = card))
+        return Templates.card(PharmacistView(role = parsed.name, who = name, card = card, holding = true))
     }
 
     @POST
@@ -83,14 +96,14 @@ class PharmacistResource(private val orderService: OrderService) {
 
     @POST
     @Path("handover/{id}")
-    fun handover(@PathParam("id") id: Long): TemplateInstance =
-        if (orderService.handover(id)) Templates.card(PharmacistView(message = "Ticket $id handed over. Take the next one."))
+    fun handover(@PathParam("id") id: Long, @QueryParam("who") who: String?): TemplateInstance =
+        if (orderService.handover(id, who(who))) Templates.card(PharmacistView(message = "Ticket $id handed over. Take the next one."))
         else Templates.card(PharmacistView(message = "That order changed. Take the next one."))
 
     @POST
     @Path("call/{id}")
-    fun call(@PathParam("id") id: Long): TemplateInstance =
-        if (orderService.call(id)) Templates.card(PharmacistView(message = "Calling ticket $id."))
+    fun call(@PathParam("id") id: Long, @QueryParam("who") who: String?): TemplateInstance =
+        if (orderService.call(id, who(who))) Templates.card(PharmacistView(message = "Calling ticket $id."))
         else Templates.card(PharmacistView(message = "That order changed. Take the next one."))
 
     @POST
@@ -115,6 +128,9 @@ class PharmacistResource(private val orderService: OrderService) {
         raw?.uppercase()
             ?.let { runCatching { PharmacistRole.valueOf(it) }.getOrNull() }
             ?: PharmacistRole.APPROVALS
+
+    /** The pharmacist's name/session id; defaults so plain `curl`/tests still work. */
+    private fun who(raw: String?): String = raw?.trim()?.takeIf { it.isNotEmpty() } ?: "pharmacist"
 
     private fun cardFor(id: Long): OrderCard? =
         transactional {

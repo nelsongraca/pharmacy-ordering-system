@@ -11,10 +11,12 @@
                         <option value="BOTH" {#if view.role == 'BOTH'}selected{/if}>Both</option>
                     </select>
                 </label>
+                <input type="hidden" name="who" value="{view.who}">
                 <noscript><button>Show</button></noscript>
             </form>
 
-            <button hx-post="/pharmacist/take?role={view.role}" hx-target="#card" hx-swap="innerHTML">Take next</button>
+            <button hx-post="/pharmacist/take?role={view.role}&who={view.who}" hx-target="#card" hx-swap="innerHTML"
+                    {#if view.holding}disabled{/if}>Take next</button>
 
             <div id="counts" hx-get="/pharmacist/counts?role={view.role}" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
 

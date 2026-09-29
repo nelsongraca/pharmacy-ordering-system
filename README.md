@@ -36,7 +36,7 @@ medication, 6 Methylphenidate.
 1. **Kiosk** → `P-10000` → a ticket appears; the board shows it under **Preparing**. The form
    resets itself after 10 seconds.
 2. **Pharmacist**, role *Approvals* → **Take next** → **Approve**. The ticket moves to **Ready**
-   after the packager finishes (3–8 seconds).
+   after the packager finishes (3–8 seconds). While holding an order, "Take next" is disabled.
 3. **Pharmacist**, role *Deliveries* → **Take next** → **Call patient**. The board highlights
    **Now calling**; then **Handed over** completes the order.
 4. Open **/board** in two windows to see live updates, and reload one to show that state
@@ -60,8 +60,9 @@ Docker must be running: the tests use Dev Services for PostgreSQL and RabbitMQ.
 
 - The prescription source is external and sits behind a client; the shipped implementation is a
   fake that decodes the number locally.
-- Several pharmacists can work at once; each takes one order at a time and picks a role
-  (approvals, deliveries, or both). There is no login.
+- Several pharmacists can work at once; each takes one order at a time (the claim is stored, so
+  "Take next" never hands the same order to two people) and picks a role (approvals, deliveries,
+  or both). A pharmacist is identified by a `?who=` name (defaults to `pharmacist`); there is no login.
 - The ticket number is the order id; it is what patients see and pharmacists call out.
 - The board shows ticket numbers only — never names or medications.
 - Orders are all-or-nothing, and intake is synchronous.

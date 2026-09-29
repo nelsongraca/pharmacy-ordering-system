@@ -38,6 +38,9 @@ class BoardResourceTest {
     @field:TestHTTPResource("/board/events")
     lateinit var eventsUrl: URL
 
+    @Suppress("PropertyName")
+    private val WHO = "tester"
+
     private val seededStock = mapOf(1L to 5L, 2L to 10L, 3L to 15L, 4L to 20L, 5L to 25L)
 
     @BeforeEach
@@ -106,7 +109,8 @@ class BoardResourceTest {
     @Test
     fun calledReadyTicketIsHighlighted() {
         val ticket = readyOrder()
-        assertTrue(orderService.call(ticket))
+        assertEquals(ticket, orderService.claimNext(PharmacistRole.DELIVERIES, WHO)) // holder calls it
+        assertTrue(orderService.call(ticket, WHO))
 
         val body = given().`when`().get("/board/columns")
             .then().statusCode(200).extract().asString()
@@ -130,8 +134,8 @@ class BoardResourceTest {
     @Test
     fun completedTicketLeavesTheBoard() {
         val ticket = readyOrder()
-        orderService.claimNext(PharmacistRole.DELIVERIES)
-        assertTrue(orderService.handover(ticket))
+        orderService.claimNext(PharmacistRole.DELIVERIES, WHO)
+        assertTrue(orderService.handover(ticket, WHO))
 
         val body = given().`when`().get("/board/columns").then().statusCode(200).extract().asString()
 

@@ -23,6 +23,9 @@ class PackagerServiceTest {
     @Inject
     lateinit var packagerService: PackagerService
 
+    @Suppress("PropertyName")
+    private val WHO = "tester"
+
     private val seededStock = mapOf(1L to 5L, 2L to 10L, 3L to 15L, 4L to 20L, 5L to 25L)
 
     @BeforeEach
@@ -52,7 +55,7 @@ class PackagerServiceTest {
     @Test
     fun ignoresAnOrderAlreadyMarkedReady() {
         val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
-        orderService.claimNext(PharmacistRole.APPROVALS)
+        orderService.claimNext(PharmacistRole.APPROVALS, WHO)
         orderService.approve(ticket)
         transactional { Order.doTransition(ticket, PrescriptionStatus.PACKAGING, PrescriptionStatus.READY) }
 

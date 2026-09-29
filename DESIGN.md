@@ -64,24 +64,31 @@ Statuses: `OUT_OF_STOCK`, `AWAITING_APPROVAL`, `IN_REVIEW`, `REJECTED`, `PACKAGI
 |---|---|---|---|
 | — | `AWAITING_APPROVAL` | Kiosk submit, all items reserved | Insert order + items, reserve stock; status event |
 | — | `OUT_OF_STOCK` | Any item unable to reserve | Nothing stays reserved; status event |
-| `AWAITING_APPROVAL` | `IN_REVIEW` | "Take next" (approvals) | Write lock (serializes claims) |
-| `IN_REVIEW` | `PACKAGING` | Approve | Publish `orders.packaging` + status event |
-| `IN_REVIEW` | `REJECTED` | Reject | Release stock once |
+| `AWAITING_APPROVAL` | `IN_REVIEW` | "Take next" (approvals) | Write lock; set `claimed_by`/`claimed_at` |
+| `IN_REVIEW` | `PACKAGING` | Approve | Clear claim; publish `orders.packaging` + status event |
+| `IN_REVIEW` | `REJECTED` | Reject | Clear claim; release stock once |
 | `PACKAGING` | `READY` | Packager done | Status event |
 | `PACKAGING` | `FAILED` | DLQ handler | Release stock once; status event |
-| `READY` | `READY` (called) | "Call patient" | Set `called_at`; status event |
-| `READY` | `COMPLETED` | "Handed over" | Consume stock |
+| `READY` | `READY` (claimed) | "Take next" (deliveries) | Set `claimed_by`/`claimed_at`; status stays `READY` |
+| `READY` | `READY` (called) | "Call patient" (holder) | Set `called_at`; status event |
+| `READY` | `COMPLETED` | "Handed over" (holder) | Clear claim; consume stock |
 | problem | dismissed | "Resolved" | Set `dismissed_at`; board hides it |
 
-`status_changed_at` is set on every change (also inside the bulk updates — JPQL bypasses `@UpdateTimestamp`). `called_at`/`dismissed_at` are set at most once by their own conditional updates.
+`status_changed_at` is set on every change (also inside the bulk updates — JPQL bypasses `@UpdateTimestamp`). `called_at`/`dismissed_at` are set at most once by their own conditional updates. `claimed_by`/`claimed_at` record who holds an order; they are cleared on the next transition.
 
 ## Coordination and concurrency
 
 - **Race for the last box:** the atomic reserve statement; exactly one order wins, the rest become `OUT_OF_STOCK`.
-- **Two pharmacists, one order:** "take next" selects the oldest matching row with a `PESSIMISTIC_WRITE` lock, so concurrent claims block and then skip it.
+- **Two pharmacists, one order:** "take next" only selects orders with `claimed_by IS NULL`, under a `PESSIMISTIC_WRITE` lock. The claim is then persisted, so a second "Take next" skips an order already held.
+- **One order per pharmacist:** a pharmacist holding an order is given that same order back instead of a new one, and the console disables "Take next".
+- **Stale claims:** none released automatically. If a pharmacist abandons a claim, the order stays held; a timeout/sweeper over `claimed_at` is a next step.
 - **Duplicate delivery:** conditional transitions make replays no-ops.
-- **Lost/duplicate messages:** the DB is the truth; a lost publish only means the board waits for its next poll.
+- **Lost/duplicate messages:** the DB is the truth; a lost status event only means the board waits for its next poll, and a lost packaging message is re-sent by the republisher (below).
 - **Stock leaks:** release/consume are guarded, so a rejected or failed order releases exactly once.
+
+## Recovering a lost publish
+
+The packaging message is published after the DB commit, so a crash in between could leave an order stuck in `PACKAGING` with no packager message. `Republisher` runs every 30s, finds `PACKAGING` orders whose `last_published_at` is older than the threshold, and re-sends the packaging message. Duplicates are harmless (the packager skips anything not in `PACKAGING`). This is enough for a single instance; a transactional outbox would be the production-grade answer.
 
 ## Messaging topology
 
@@ -134,15 +141,17 @@ Why this shape:
 - **Prescription format is local decode**, `P-#####` (one digit per medication id, plus an optional sixth for the favorite), not a seeded lookup keyed by `RX-####`. Demo hooks are `P-60000` (out of stock), `P-00009` (packager failure), `P-99999` (source outage).
 - **The board shows ticket numbers, not patient names.** `base-spec.md` says the pharmacist calls out the patient's number/name; we call the ticket number so no personal data is ever displayed. A conscious privacy choice, not a requirement of the challenge.
 - **The favorite medication is included.** `base-spec.md` invites adding one; the seed and the sixth decode digit make `Methylphenidate` orderable (`P-000001`).
-- **No pharmacist session/cookies.** The role travels as a `?role=` query parameter.
+- **No pharmacist session/cookies.** The role and the pharmacist identity travel as `?role=`/`?who=` query parameters; there is no auth, so `claimed_by` is a name, not a verified user.
+- **Lost publish recovery is a scheduled republisher** (`last_published_at`, packaging only), not a transactional outbox.
 - **Live board is an addition** beyond the base challenge: the base asks for a synchronous way for patients to track status, which the board plus SSE provides.
 
 ## Next steps
 
 Ordered by value:
 
-1. **Recover a failed publish after commit** — a transactional outbox (or a small scheduled republisher over a `last_published_at` column). Today such an order stalls and only surfaces as "taking longer than usual".
-2. **Durable delivery ownership** — add `claimed_by`/`claimed_at`, so "one order per pharmacist" and "skip already-claimed READY orders" become possible; optionally a stale-claim sweeper with a `give-up-after`.
+1. **Transactional outbox** to replace the republisher's best-effort recovery and to cover status-event loss and multi-instance races.
+2. **Stale-claim recovery** — release or requeue an order held by a pharmacist who abandoned it (timeout over `claimed_at`).
 3. **Broker-level packaging retry** — quorum queues + `x-delivery-limit`, or app-level attempts, to survive transient packager errors instead of failing immediately.
 4. **Flyway migrations** and an `order_events` audit table.
-5. **Configurable timings** (`pharmacy.board.delayed-after`, `pharmacy.packager.delay-*`) via `@ConfigMapping` instead of constants.
+5. **Configurable timings** (`pharmacy.board.delayed-after`, `pharmacy.packager.delay-*`, `pharmacy.republish-after`) via `@ConfigMapping` instead of constants.
+6. **Real identity/auth** for the pharmacist console, so `claimed_by` is trustworthy and per-user.
