@@ -3,7 +3,7 @@ package com.flowkode.pharma
 import com.flowkode.pharma.domain.Medication
 import com.flowkode.pharma.domain.Order
 import com.flowkode.pharma.domain.OrderItem
-import io.quarkus.narayana.jta.QuarkusTransaction
+import com.flowkode.pharma.util.transactional
 import io.quarkus.test.junit.QuarkusTest
 import io.restassured.RestAssured.given
 import io.restassured.http.ContentType
@@ -19,24 +19,24 @@ class KioskResourceTest {
 
     @BeforeEach
     fun reset() {
-        QuarkusTransaction.requiringNew()
-            .run {
-                OrderItem.deleteAll()
-                Order.deleteAll()
-                seededStock.forEach { (id, stock) ->
-                    Medication.findById(id)!!
-                        .apply {
-                            this.stock = stock
-                            reserved = 0
-                        }
-                }
+        transactional {
+            OrderItem.deleteAll()
+            Order.deleteAll()
+            seededStock.forEach { (id, stock) ->
+                Medication.findById(id)!!
+                    .apply {
+                        this.stock = stock
+                        reserved = 0
+                    }
             }
+        }
     }
 
     @Test
     fun kioskPageRendersForm() {
         given()
-            .`when`().get("/")
+            .`when`()
+            .get("/")
             .then()
             .statusCode(200)
             .body(containsString("Enter your prescription number"))
@@ -47,8 +47,10 @@ class KioskResourceTest {
     @Test
     fun validCodeShowsTicket() {
         given()
-            .contentType(ContentType.URLENC).formParam("code", "P-10000")
-            .`when`().post("/orders")
+            .contentType(ContentType.URLENC)
+            .formParam("code", "P-10000")
+            .`when`()
+            .post("/orders")
             .then()
             .statusCode(200)
             .body(containsString("Your number is"))
@@ -57,8 +59,10 @@ class KioskResourceTest {
     @Test
     fun malformedCodeRerendersForm() {
         given()
-            .contentType(ContentType.URLENC).formParam("code", "nope")
-            .`when`().post("/orders")
+            .contentType(ContentType.URLENC)
+            .formParam("code", "nope")
+            .`when`()
+            .post("/orders")
             .then()
             .statusCode(200)
             .body(containsString("look like a prescription number"))
@@ -67,8 +71,10 @@ class KioskResourceTest {
     @Test
     fun outOfStockRerendersForm() {
         given()
-            .contentType(ContentType.URLENC).formParam("code", "P-90000")
-            .`when`().post("/orders")
+            .contentType(ContentType.URLENC)
+            .formParam("code", "P-90000")
+            .`when`()
+            .post("/orders")
             .then()
             .statusCode(200)
             .body(containsString("Please ask at the counter"))

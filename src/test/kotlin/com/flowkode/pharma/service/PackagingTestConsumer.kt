@@ -1,5 +1,7 @@
 package com.flowkode.pharma.service
 
+import com.flowkode.pharma.dto.OrderPayload
+import io.vertx.core.json.JsonObject
 import jakarta.enterprise.context.ApplicationScoped
 import org.eclipse.microprofile.reactive.messaging.Incoming
 import java.util.concurrent.CopyOnWriteArrayList
@@ -8,10 +10,10 @@ import java.util.concurrent.CopyOnWriteArrayList
 @ApplicationScoped
 class PackagingTestConsumer {
 
-    val received = CopyOnWriteArrayList<String>()
+    val received = CopyOnWriteArrayList<OrderPayload>()
 
     @Incoming("packaging-test")
-    fun consume(message: String) {
-        received.add(message)
+    fun consume(payload: JsonObject) {
+        received.add(payload.mapTo(OrderPayload::class.java))
     }
 }

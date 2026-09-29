@@ -13,4 +13,10 @@ class StockService {
             Medication.release(item.medication.id!!, item.amount)
         }
     }
+
+    fun consume(order: Order) {
+        for (item in order.items) {
+            Medication.consume(item.medication.id!!, item.amount)
+        }
+    }
 }

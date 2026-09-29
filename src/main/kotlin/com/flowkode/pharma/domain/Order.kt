@@ -1,17 +1,8 @@
 package com.flowkode.pharma.domain
 
 import io.quarkus.hibernate.orm.panache.kotlin.PanacheCompanion
-import io.quarkus.hibernate.orm.panache.kotlin.PanacheEntity
 import io.quarkus.hibernate.orm.panache.kotlin.PanacheEntityBase
-import jakarta.persistence.CascadeType
-import jakarta.persistence.Entity
-import jakarta.persistence.GeneratedValue
-import jakarta.persistence.GenerationType
-import jakarta.persistence.Id
-import jakarta.persistence.LockModeType
-import jakarta.persistence.OneToMany
-import jakarta.persistence.SequenceGenerator
-import jakarta.persistence.Table
+import jakarta.persistence.*
 
 @Entity
 @Table(name = "orders")
@@ -19,24 +10,33 @@ class Order : PanacheEntityBase {
 
     companion object : PanacheCompanion<Order> {
 
-        /** Locks the oldest AWAITING_APPROVAL order and marks it IN_REVIEW. Null when none wait. */
-        fun claimOldestAwaiting(): Long? {
-            val order = find("status = ?1 order by id", PrescriptionStatus.AWAITING_APPROVAL)
-                .withLock(LockModeType.PESSIMISTIC_WRITE)
+        /**
+         * Locks the oldest order in any of [status] (oldest ticket first) and, when [target] is given,
+         * moves it there. A null [target] claims without changing status (delivery keeps READY).
+         * The write lock serializes concurrent claims so two pharmacists never take the same order.
+         */
+        fun claimOldest(target: PrescriptionStatus?, vararg status: PrescriptionStatus): Long? {
+            //ids are sequential so we can order by id, ideally we use an update date so we process the ones that changed more time ago
+            //todo: add date for ordering and audit
+            val order = find("status in ?1 order by id", status.toList())
+                .withLock(LockModeType.PESSIMISTIC_WRITE) //also not a big fan of these for large scale cann be a problem
                 .firstResult()
                 ?: return null
 
-            order.status = PrescriptionStatus.IN_REVIEW
+            if (target != null) order.status = target
             return order.id
         }
 
-        fun approveFromReview(id: Long): Boolean =
-            update(
+
+        fun doTransition(id: Long, from: PrescriptionStatus, to: PrescriptionStatus): Boolean {
+            return update(
                 "status = ?1 where id = ?2 and status = ?3",
-                PrescriptionStatus.PACKAGING,
+                to,
                 id,
-                PrescriptionStatus.IN_REVIEW,
+                from,
             ) == 1
+        }
+
 
         fun rejectFromReview(id: Long): Boolean =
             update(
@@ -46,7 +46,11 @@ class Order : PanacheEntityBase {
                 PrescriptionStatus.IN_REVIEW,
             ) == 1
 
-        fun countAwaitingApproval(): Long = count("status = ?1", PrescriptionStatus.AWAITING_APPROVAL)
+        fun countByStatus(vararg status: PrescriptionStatus): Long {
+            return count("status in ?1", status.asList())
+        }
+
+
     }
 
     @Id

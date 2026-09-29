@@ -3,7 +3,7 @@ package com.flowkode.pharma
 import com.flowkode.pharma.domain.Order
 import com.flowkode.pharma.domain.PharmacistRole
 import com.flowkode.pharma.service.OrderService
-import io.quarkus.narayana.jta.QuarkusTransaction
+import com.flowkode.pharma.util.transactional
 import io.quarkus.qute.CheckedTemplate
 import io.quarkus.qute.TemplateInstance
 import jakarta.ws.rs.*
@@ -72,6 +72,12 @@ class PharmacistResource(private val orderService: OrderService) {
         if (orderService.reject(id)) Templates.card(PharmacistView(message = "Rejected ticket $id. Stock released."))
         else Templates.card(PharmacistView(message = "That order changed. Take the next one."))
 
+    @POST
+    @Path("handover/{id}")
+    fun handover(@PathParam("id") id: Long): TemplateInstance =
+        if (orderService.handover(id)) Templates.card(PharmacistView(message = "Ticket $id handed over. Take the next one."))
+        else Templates.card(PharmacistView(message = "That order changed. Take the next one."))
+
     @GET
     @Path("counts")
     fun counts(@QueryParam("role") role: String?): TemplateInstance {
@@ -84,9 +90,9 @@ class PharmacistResource(private val orderService: OrderService) {
             ?.let { runCatching { PharmacistRole.valueOf(it) }.getOrNull() }
             ?: PharmacistRole.APPROVALS
 
-    private fun cardFor(id: Long): OrderCard? = QuarkusTransaction.requiringNew()
-        .call {
-            val order = Order.findById(id) ?: return@call null
+    private fun cardFor(id: Long): OrderCard? =
+        transactional {
+            val order = Order.findById(id) ?: return@transactional null
             OrderCard(
                 id = order.id!!,
                 code = order.prescriptionCode,

@@ -1,11 +1,8 @@
 package com.flowkode.pharma.service
 
-import com.flowkode.pharma.domain.Medication
-import com.flowkode.pharma.domain.Order
-import com.flowkode.pharma.domain.OrderItem
-import com.flowkode.pharma.domain.PharmacistRole
-import com.flowkode.pharma.domain.PrescriptionStatus
-import io.quarkus.narayana.jta.QuarkusTransaction
+import com.flowkode.pharma.domain.*
+import com.flowkode.pharma.dto.OrderPayload
+import com.flowkode.pharma.util.transactional
 import jakarta.enterprise.context.ApplicationScoped
 import org.eclipse.microprofile.reactive.messaging.Channel
 import org.eclipse.microprofile.reactive.messaging.Emitter
@@ -16,20 +13,22 @@ class OrderService(
     private val prescriptionService: PrescriptionService,
     private val stockService: StockService,
 ) {
+
     private val log = Logger.getLogger(OrderService::class.java)
 
     @Channel("packaging")
-    lateinit var packaging: Emitter<String>
+    lateinit var packaging: Emitter<OrderPayload>
 
     fun create(prescriptionNumber: String): OrderResult {
         val items = prescriptionService.fetchPrescription(prescriptionNumber)
 
         val ticket = try {
-            QuarkusTransaction.requiringNew().call { reserveAndCreate(prescriptionNumber, items) }
-        } catch (ex: NoStockException) {
+            transactional { reserveAndCreate(prescriptionNumber, items) }
+        }
+        catch (ex: NoStockException) {
             //record the failure in its own transaction
             //todo: not happy with this approach
-            QuarkusTransaction.requiringNew().run { createOutOfStock(prescriptionNumber) }
+            transactional { createOutOfStock(prescriptionNumber) }
             return OrderResult.OutOfStock(ex.medicationId)
         }
 
@@ -38,38 +37,50 @@ class OrderService(
 
     // get next from db, based on the role the pharmacist works
     fun claimNext(role: PharmacistRole): Long? =
-        QuarkusTransaction.requiringNew().call {
+        transactional {
             when (role) {
-                PharmacistRole.APPROVALS, PharmacistRole.BOTH -> Order.claimOldestAwaiting()
-                PharmacistRole.DELIVERIES -> null // TODO: READY orders once deliveries exist
+                PharmacistRole.APPROVALS  -> Order.claimOldest(PrescriptionStatus.IN_REVIEW, PrescriptionStatus.AWAITING_APPROVAL)
+                PharmacistRole.DELIVERIES -> Order.claimOldest(null, PrescriptionStatus.READY) //todo: claim is not persisted; consider claimed_by/claimed_at (see notes.md)
+                PharmacistRole.BOTH       -> Order.claimOldest(null, PrescriptionStatus.READY) //todo: same, see above
+                    ?: Order.claimOldest(PrescriptionStatus.IN_REVIEW, PrescriptionStatus.AWAITING_APPROVAL)
             }
         }
 
     fun countWaiting(role: PharmacistRole): Long =
-        QuarkusTransaction.requiringNew().call {
+        transactional {
             when (role) {
-                PharmacistRole.APPROVALS, PharmacistRole.BOTH -> Order.countAwaitingApproval()
-                PharmacistRole.DELIVERIES -> 0L
+                PharmacistRole.APPROVALS  -> Order.countByStatus(PrescriptionStatus.AWAITING_APPROVAL)
+                PharmacistRole.DELIVERIES -> Order.countByStatus(PrescriptionStatus.READY)
+                PharmacistRole.BOTH       -> Order.countByStatus(PrescriptionStatus.AWAITING_APPROVAL, PrescriptionStatus.READY)
             }
         }
 
     fun approve(id: Long): Boolean {
-        val approved = QuarkusTransaction.requiringNew().call { Order.approveFromReview(id) }
+        val approved = transactional { Order.doTransition(id, PrescriptionStatus.IN_REVIEW, PrescriptionStatus.PACKAGING) }
         if (!approved) return false
 
         try {
-            packaging.send("""{"orderId":$id}""")
-        } catch (ex: Exception) {
+            packaging.send(OrderPayload(id))
+        }
+        catch (ex: Exception) {
             log.errorf(ex, "Failed to publish packaging for order %d", id)
         }
         return true
     }
 
     fun reject(id: Long): Boolean =
-        QuarkusTransaction.requiringNew().call {
-            if (!Order.rejectFromReview(id)) return@call false
+        transactional {
+            if (!Order.rejectFromReview(id)) return@transactional false
 
             stockService.release(Order.findById(id)!!)
+            true
+        }
+
+    fun handover(id: Long): Boolean =
+        transactional {
+            if (!Order.doTransition(id, PrescriptionStatus.READY, PrescriptionStatus.COMPLETED)) return@transactional false
+
+            stockService.consume(Order.findById(id)!!)
             true
         }
 
@@ -103,6 +114,7 @@ class OrderService(
         Order().apply {
             prescriptionCode = code
             status = PrescriptionStatus.OUT_OF_STOCK
-        }.persist()
+        }
+            .persist()
     }
 }

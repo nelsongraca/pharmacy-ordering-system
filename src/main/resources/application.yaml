@@ -11,11 +11,21 @@ mp:
         exchange:
           name: orders
         routing-key: orders.packaging
+    incoming:
+      packager:
+        connector: smallrye-rabbitmq
+        queue:
+          name: orders.packaging
+        exchange:
+          name: orders
+        routing-key: orders.packaging
 
 "%test":
   mp:
     messaging:
       incoming:
+        packager:
+          enabled: false
         packaging-test:
           connector: smallrye-rabbitmq
           queue:

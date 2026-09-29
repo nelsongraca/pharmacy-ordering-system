@@ -7,7 +7,8 @@ import com.flowkode.pharma.domain.PharmacistRole
 import com.flowkode.pharma.domain.PrescriptionStatus
 import com.flowkode.pharma.service.OrderResult
 import com.flowkode.pharma.service.OrderService
-import io.quarkus.narayana.jta.QuarkusTransaction
+import com.flowkode.pharma.service.PackagerService
+import com.flowkode.pharma.util.transactional
 import io.quarkus.test.junit.QuarkusTest
 import io.restassured.RestAssured.given
 import jakarta.inject.Inject
@@ -22,12 +23,14 @@ class PharmacistResourceTest {
     @Inject
     lateinit var orderService: OrderService
 
+    @Inject
+    lateinit var packagerService: PackagerService
+
     private val seededStock = mapOf(1L to 5L, 2L to 10L, 3L to 15L, 4L to 20L, 5L to 25L)
 
     @BeforeEach
     fun reset() {
-        QuarkusTransaction.requiringNew()
-            .run {
+        transactional {
                 OrderItem.deleteAll()
                 Order.deleteAll()
                 seededStock.forEach { (id, stock) ->
@@ -84,8 +87,34 @@ class PharmacistResourceTest {
             .statusCode(200)
             .body(containsString("Approved ticket $ticket"))
 
-        QuarkusTransaction.requiringNew()
-            .run { assertEquals(PrescriptionStatus.PACKAGING, Order.findById(ticket)!!.status) }
+        transactional { assertEquals(PrescriptionStatus.PACKAGING, Order.findById(ticket)!!.status) }
+    }
+
+    @Test
+    fun deliveryTakeShowsHandoverAndCompletes() {
+        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        orderService.claimNext(PharmacistRole.APPROVALS)
+        orderService.approve(ticket)
+        transactional {
+            Order.doTransition(ticket, PrescriptionStatus.PACKAGING, PrescriptionStatus.READY)
+        }
+
+        given()
+            .`when`()
+            .post("/pharmacist/take?role=DELIVERIES")
+            .then()
+            .statusCode(200)
+            .body(containsString("Ticket $ticket"))
+            .body(containsString("Handed over"))
+
+        given()
+            .`when`()
+            .post("/pharmacist/handover/$ticket")
+            .then()
+            .statusCode(200)
+            .body(containsString("handed over"))
+
+        transactional { assertEquals(PrescriptionStatus.COMPLETED, Order.findById(ticket)!!.status) }
     }
 
     @Test
@@ -96,6 +125,24 @@ class PharmacistResourceTest {
             .`when`().get("/pharmacist/counts?role=APPROVALS")
             .then()
             .statusCode(200)
-            .body(containsString("Waiting for approval: 1"))
+            .body(containsString("Waiting: 1"))
+    }
+
+    @Test
+    fun countsForBothAddsApprovalsAndDeliveries() {
+        val ready = (orderService.create("P-20000") as OrderResult.Placed).ticket
+        orderService.claimNext(PharmacistRole.APPROVALS)
+        orderService.approve(ready)
+        transactional {
+            Order.doTransition(ready, PrescriptionStatus.PACKAGING, PrescriptionStatus.READY)
+        }
+        orderService.create("P-10000") // stays AWAITING_APPROVAL
+
+        given()
+            .`when`()
+            .get("/pharmacist/counts?role=BOTH")
+            .then()
+            .statusCode(200)
+            .body(containsString("Waiting: 2"))
     }
 }

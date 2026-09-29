@@ -20,6 +20,11 @@ class Medication : PanacheEntity() {
         fun release(id: Long, quantity: Long) {
             update("reserved = reserved - ?1 where id = ?2", quantity, id)
         }
+
+        /** Books reserved stock out on hand-over. */
+        fun consume(id: Long, quantity: Long) {
+            update("stock = stock - ?1, reserved = reserved - ?1 where id = ?2", quantity, id)
+        }
     }
 
     @Column(unique = true)

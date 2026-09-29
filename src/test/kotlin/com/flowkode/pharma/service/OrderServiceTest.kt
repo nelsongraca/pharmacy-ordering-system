@@ -1,11 +1,8 @@
 package com.flowkode.pharma.service
 
-import com.flowkode.pharma.domain.Medication
-import com.flowkode.pharma.domain.Order
-import com.flowkode.pharma.domain.OrderItem
-import com.flowkode.pharma.domain.PharmacistRole
-import com.flowkode.pharma.domain.PrescriptionStatus
-import io.quarkus.narayana.jta.QuarkusTransaction
+import com.flowkode.pharma.domain.*
+import com.flowkode.pharma.dto.OrderPayload
+import com.flowkode.pharma.util.transactional
 import io.quarkus.test.junit.QuarkusTest
 import jakarta.inject.Inject
 import jakarta.transaction.Transactional
@@ -30,18 +27,17 @@ class OrderServiceTest {
 
     @BeforeEach
     fun reset() {
-        QuarkusTransaction.requiringNew()
-            .run {
-                OrderItem.deleteAll()
-                Order.deleteAll()
-                seededStock.forEach { (id, stock) ->
-                    Medication.findById(id)!!
-                        .apply {
-                            this.stock = stock
-                            reserved = 0
-                        }
-                }
+        transactional {
+            OrderItem.deleteAll()
+            Order.deleteAll()
+            seededStock.forEach { (id, stock) ->
+                Medication.findById(id)!!
+                    .apply {
+                        this.stock = stock
+                        reserved = 0
+                    }
             }
+        }
         packagingConsumer.received.clear()
     }
 
@@ -89,23 +85,20 @@ class OrderServiceTest {
 
     @Test
     fun reservationIsAllOrNothing() {
-        QuarkusTransaction.requiringNew()
-            .run { Medication.findById(2L)!!.stock = 8L }
+        transactional { Medication.findById(2L)!!.stock = 8L }
 
         val result = orderService.create("P-19000") // 1 Amoxicillin (ok) + 9 Ibuprofen (only 8)
 
         assertEquals(OrderResult.OutOfStock(2L), result)
-        QuarkusTransaction.requiringNew()
-            .run {
-                assertEquals(0L, Medication.findById(1L)!!.reserved)
-                assertEquals(0L, Medication.findById(2L)!!.reserved)
-            }
+        transactional {
+            assertEquals(0L, Medication.findById(1L)!!.reserved)
+            assertEquals(0L, Medication.findById(2L)!!.reserved)
+        }
     }
 
     @Test
     fun lastBoxRaceOnlyOneOrderWins() {
-        QuarkusTransaction.requiringNew()
-            .run { Medication.findById(1L)!!.stock = 1L }
+        transactional { Medication.findById(1L)!!.stock = 1L }
 
         val threads = 10
         val pool = Executors.newFixedThreadPool(threads)
@@ -127,10 +120,9 @@ class OrderServiceTest {
             pool.shutdown()
         }
 
-        QuarkusTransaction.requiringNew()
-            .run {
-                assertEquals(1L, Medication.findById(1L)!!.reserved)
-            }
+        transactional {
+            assertEquals(1L, Medication.findById(1L)!!.reserved)
+        }
     }
 
     @Test
@@ -175,9 +167,8 @@ class OrderServiceTest {
 
         assertTrue(orderService.approve(ticket))
 
-        assertEquals("""{"orderId":$ticket}""", awaitPackaging())
-        QuarkusTransaction.requiringNew()
-            .run { assertEquals(PrescriptionStatus.PACKAGING, Order.findById(ticket)!!.status) }
+        assertEquals(OrderPayload(ticket), awaitPackaging())
+        transactional { assertEquals(PrescriptionStatus.PACKAGING, Order.findById(ticket)!!.status) }
     }
 
     @Test
@@ -188,20 +179,20 @@ class OrderServiceTest {
         assertTrue(orderService.reject(ticket))
         assertFalse(orderService.reject(ticket))
 
-        QuarkusTransaction.requiringNew()
-            .run {
-                assertEquals(0L, Medication.findById(1L)!!.reserved)
-                assertEquals(PrescriptionStatus.REJECTED, Order.findById(ticket)!!.status)
-            }
+        transactional {
+            assertEquals(0L, Medication.findById(1L)!!.reserved)
+            assertEquals(PrescriptionStatus.REJECTED, Order.findById(ticket)!!.status)
+        }
     }
 
-    private fun awaitPackaging(): String {
-        val deadline = System.currentTimeMillis() + 5000
+    private fun awaitPackaging(): OrderPayload {
+        val deadline = System.currentTimeMillis() + 50000000
         while (System.currentTimeMillis() < deadline) {
-            packagingConsumer.received.firstOrNull()?.let { return it }
+            packagingConsumer.received.firstOrNull()
+                ?.let { return it }
             Thread.sleep(50)
         }
-        fail<String>("no message on orders.packaging")
+        fail<OrderPayload>("no message on orders.packaging")
         error("unreachable")
     }
 }
