@@ -123,7 +123,7 @@ class Order : PanacheEntityBase {
     var id: Long? = null
 
     lateinit var prescriptionCode: String
-    var status = PrescriptionStatus.RECEIVED
+    var status = PrescriptionStatus.AWAITING_APPROVAL
     var stockReleased = false
     var statusChangedAt: Instant = Instant.now()
     var calledAt: Instant? = null

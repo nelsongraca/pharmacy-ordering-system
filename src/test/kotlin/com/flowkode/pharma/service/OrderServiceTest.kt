@@ -74,6 +74,25 @@ class OrderServiceTest {
     }
 
     @Test
+    fun sixDigitCodeOrdersTheFavoriteMedication() {
+        transactional {
+            Medication.findById(6L)!!.apply {
+                stock = 30
+                reserved = 0
+            }
+        }
+
+        val result = orderService.create("P-000001") // 1 of medication 6
+
+        assertTrue(result is OrderResult.Placed)
+        transactional {
+            assertEquals(1L, Medication.findById(6L)!!.reserved)
+            val order = Order.findById((result as OrderResult.Placed).ticket)!!
+            assertEquals(6L, order.items[0].medication.id)
+        }
+    }
+
+    @Test
     @Transactional
     fun shortageLeavesNothingReservedAndRecordsOutOfStock() {
         val result = orderService.create("P-90000") // 9 Amoxicillin, only 5 on hand
@@ -187,6 +206,73 @@ class OrderServiceTest {
             assertEquals(0L, Medication.findById(1L)!!.reserved)
             assertEquals(PrescriptionStatus.REJECTED, Order.findById(ticket)!!.status)
         }
+    }
+
+    @Test
+    fun bothRolePrefersDeliveryOverApprovals() {
+        val ready = readyOrder("P-01000")
+        orderService.create("P-10000") // waits for approvals
+
+        assertEquals(ready, orderService.claimNext(PharmacistRole.BOTH))
+    }
+
+    @Test
+    fun deliveriesRoleIgnoresApprovals() {
+        orderService.create("P-10000")
+
+        assertNull(orderService.claimNext(PharmacistRole.DELIVERIES))
+    }
+
+    @Test
+    fun approvalsRoleIgnoresReady() {
+        readyOrder("P-10000")
+
+        assertNull(orderService.claimNext(PharmacistRole.APPROVALS))
+    }
+
+    @Test
+    fun samePrescriptionCanBeOrderedAgainAfterItCompletes() {
+        val first = readyOrder("P-10000")
+        assertEquals(first, orderService.claimNext(PharmacistRole.DELIVERIES))
+        assertTrue(orderService.handover(first))
+
+        assertTrue(orderService.create("P-10000") is OrderResult.Placed)
+    }
+
+    @Test
+    fun callIsIdempotent() {
+        val ticket = readyOrder("P-10000")
+
+        assertTrue(orderService.call(ticket))
+        assertFalse(orderService.call(ticket))
+    }
+
+    @Test
+    fun dismissIsIdempotent() {
+        orderService.create("P-90000") // 9 Amoxicillin, only 5 on hand -> OUT_OF_STOCK
+        val ticket = transactional {
+            Order.find("status = ?1", PrescriptionStatus.OUT_OF_STOCK).firstResult()!!.id!!
+        }
+
+        assertTrue(orderService.dismiss(ticket))
+        assertFalse(orderService.dismiss(ticket))
+    }
+
+    @Test
+    fun approveAfterRejectIsANoOp() {
+        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        orderService.claimNext(PharmacistRole.APPROVALS)
+
+        assertTrue(orderService.reject(ticket))
+        assertFalse(orderService.approve(ticket))
+    }
+
+    private fun readyOrder(code: String): Long {
+        val ticket = (orderService.create(code) as OrderResult.Placed).ticket
+        transactional { Order.doTransition(ticket, PrescriptionStatus.AWAITING_APPROVAL, PrescriptionStatus.IN_REVIEW) }
+        orderService.approve(ticket)
+        transactional { Order.doTransition(ticket, PrescriptionStatus.PACKAGING, PrescriptionStatus.READY) }
+        return ticket
     }
 
     private fun awaitPackaging(): OrderPayload {

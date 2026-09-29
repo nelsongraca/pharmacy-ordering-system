@@ -4,15 +4,17 @@ import jakarta.enterprise.context.ApplicationScoped
 
 /*
 this would either be our external service for fetching prescription information or database access to fetch the data
-here we just "decode" from the number
+here we just "decode" from the number, one digit per medication id starting at 1
 P-10000 would mean 1 of the medication with id 1
 P-60000 would mean 6 of the medication with id 1
-yes it limits to 9, for this exercise it's enough
+P-000001 would mean 1 of the medication with id 6 (our "favorite" medication)
+yes it limits to 9 per line, for this exercise it's enough
 */
 @ApplicationScoped
 class PrescriptionService {
 
-    private val extractionPattern = Regex("^P-([0-9])([0-9])([0-9])([0-9])([0-9])$")
+    // five digits (ids 1-5) or six (adds id 6); the last digit is optional
+    private val extractionPattern = Regex("^P-([0-9])([0-9])([0-9])([0-9])([0-9])([0-9])?$")
 
     /** medication id -> quantity, one digit per id starting at 1. */
     fun fetchPrescription(prescriptionNumber: String): Map<Long, Long> {
@@ -26,8 +28,12 @@ class PrescriptionService {
 
         val items = match.groupValues
             .drop(1) // Skips index 0 (full match)
-            .mapIndexed { index, digit -> (index + 1).toLong() to digit.toLong() }
-            .filter { (_, quantity) -> quantity > 0 }
+            .mapIndexedNotNull { index, digit ->
+                // an unmatched optional group is an empty string
+                digit.toIntOrNull()
+                    ?.takeIf { it > 0 }
+                    ?.let { (index + 1).toLong() to it.toLong() }
+            }
             .toMap()
 
         if (items.isEmpty()) throw IllegalArgumentException("Invalid prescription number")

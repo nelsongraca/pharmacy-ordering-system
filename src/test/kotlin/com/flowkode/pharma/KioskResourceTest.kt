@@ -79,4 +79,54 @@ class KioskResourceTest {
             .statusCode(200)
             .body(containsString("Please ask at the counter"))
     }
+
+    @Test
+    fun lowercaseCodeIsAccepted() {
+        given()
+            .contentType(ContentType.URLENC)
+            .formParam("code", "p-10000")
+            .`when`()
+            .post("/orders")
+            .then()
+            .statusCode(200)
+            .body(containsString("Your number is"))
+    }
+
+    @Test
+    fun sixDigitCodeOrdersTheFavoriteMedication() {
+        given()
+            .contentType(ContentType.URLENC)
+            .formParam("code", "P-000001")
+            .`when`()
+            .post("/orders")
+            .then()
+            .statusCode(200)
+            .body(containsString("Your number is"))
+    }
+
+    @Test
+    fun duplicateActivePrescriptionIsReported() {
+        given().contentType(ContentType.URLENC).formParam("code", "P-10000").`when`().post("/orders")
+
+        given()
+            .contentType(ContentType.URLENC)
+            .formParam("code", "P-10000")
+            .`when`()
+            .post("/orders")
+            .then()
+            .statusCode(200)
+            .body(containsString("already being prepared"))
+    }
+
+    @Test
+    fun sourceOutageRerendersForm() {
+        given()
+            .contentType(ContentType.URLENC)
+            .formParam("code", "P-99999")
+            .`when`()
+            .post("/orders")
+            .then()
+            .statusCode(200)
+            .body(containsString("Something went wrong"))
+    }
 }
