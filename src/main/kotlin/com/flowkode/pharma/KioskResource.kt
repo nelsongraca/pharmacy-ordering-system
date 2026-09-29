@@ -51,8 +51,12 @@ class KioskResource(private val orderService: OrderService) {
                     Templates.`kiosk$ticket`(KioskView(number = result.ticket))
                 is OrderResult.OutOfStock ->
                     Templates.`kiosk$form`(KioskView(error = OUT_OF_STOCK, code = input))
+                OrderResult.AlreadyActive ->
+                    Templates.`kiosk$form`(KioskView(error = ALREADY_ACTIVE, code = input))
+                OrderResult.Unavailable ->
+                    Templates.`kiosk$form`(KioskView(error = UNAVAILABLE, code = input))
             }
-        } catch (ex: IllegalArgumentException) {
+        } catch (_: IllegalArgumentException) {
             Templates.`kiosk$form`(KioskView(error = INVALID, code = input))
         }
     }
@@ -60,5 +64,7 @@ class KioskResource(private val orderService: OrderService) {
     companion object {
         private const val OUT_OF_STOCK = "We couldn't prepare that prescription. Please ask at the counter."
         private const val INVALID = "That doesn't look like a prescription number."
+        private const val ALREADY_ACTIVE = "This prescription is already being prepared. Watch the board or ask at the counter."
+        private const val UNAVAILABLE = "Something went wrong. Please ask at the counter."
     }
 }

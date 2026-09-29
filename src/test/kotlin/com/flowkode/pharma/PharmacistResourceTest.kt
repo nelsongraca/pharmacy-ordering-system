@@ -13,7 +13,9 @@ import io.quarkus.test.junit.QuarkusTest
 import io.restassured.RestAssured.given
 import jakarta.inject.Inject
 import org.hamcrest.CoreMatchers.containsString
+import org.hamcrest.CoreMatchers.not
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 
@@ -144,5 +146,44 @@ class PharmacistResourceTest {
             .then()
             .statusCode(200)
             .body(containsString("Waiting: 2"))
+    }
+
+    @Test
+    fun callPatientMarksTheTicketCalled() {
+        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        orderService.claimNext(PharmacistRole.APPROVALS)
+        orderService.approve(ticket)
+        transactional { Order.doTransition(ticket, PrescriptionStatus.PACKAGING, PrescriptionStatus.READY) }
+
+        given()
+            .`when`().post("/pharmacist/call/$ticket")
+            .then()
+            .statusCode(200)
+            .body(containsString("Calling ticket $ticket"))
+
+        transactional { assertNotNull(Order.findById(ticket)!!.calledAt) }
+    }
+
+    @Test
+    fun attentionListsProblemOrdersAndDismissRemovesThem() {
+        orderService.create("P-90000") // 9 Amoxicillin, only 5 on hand -> OUT_OF_STOCK
+        val ticket = transactional {
+            Order.find("status = ?1", PrescriptionStatus.OUT_OF_STOCK).firstResult()!!.id!!
+        }
+
+        given()
+            .`when`().get("/pharmacist/attention")
+            .then()
+            .statusCode(200)
+            .body(containsString("OUT_OF_STOCK"))
+            .body(containsString("#$ticket"))
+
+        given()
+            .`when`().post("/pharmacist/dismiss/$ticket")
+            .then()
+            .statusCode(200)
+            .body(not(containsString("#$ticket")))
+
+        transactional { assertNotNull(Order.findById(ticket)!!.dismissedAt) }
     }
 }

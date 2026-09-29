@@ -101,13 +101,15 @@ class OrderServiceTest {
         transactional { Medication.findById(1L)!!.stock = 1L }
 
         val threads = 10
+        // distinct prescriptions, each wanting one unit of medication 1 and a different amount of medication 5
+        val codes = (0..9).map { "P-1000$it" }
         val pool = Executors.newFixedThreadPool(threads)
         val latch = CountDownLatch(1)
         try {
-            val futures = (1..threads).map {
+            val futures = codes.map { code ->
                 pool.submit(Callable {
                     latch.await()
-                    orderService.create("P-10000")
+                    orderService.create(code)
                 })
             }
             latch.countDown()
@@ -137,7 +139,9 @@ class OrderServiceTest {
 
     @Test
     fun parallelClaimHandsEachOrderOutOnce() {
-        val tickets = (1..5).map { (orderService.create("P-10000") as OrderResult.Placed).ticket }
+        // one unit each of five different medications, so five distinct orders exist to be claimed
+        val codes = listOf("P-10000", "P-01000", "P-00100", "P-00010", "P-00001")
+        val tickets = codes.map { (orderService.create(it) as OrderResult.Placed).ticket }
 
         val threads = 10
         val pool = Executors.newFixedThreadPool(threads)

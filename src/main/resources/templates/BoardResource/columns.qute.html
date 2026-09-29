@@ -1,0 +1,39 @@
+<div class="columns">
+    <section>
+        <h2>Preparing</h2>
+        <ul>
+            {#for ticket in view.preparing}
+                <li class="ticket">
+                    <span class="number">#{ticket.id}</span>
+                    <small>{ticket.stage}</small>
+                    {#if ticket.delayed}<span class="delayed">taking longer than usual</span>{/if}
+                </li>
+            {/for}
+        </ul>
+    </section>
+
+    <section>
+        <h2>Ready</h2>
+        <ul>
+            {#for ticket in view.ready}
+                {#if ticket.calling}
+                    <li class="ticket calling"><span class="number">#{ticket.id}</span><small>Now calling</small></li>
+                {#else}
+                    <li class="ticket"><span class="number">#{ticket.id}</span></li>
+                {/if}
+            {/for}
+        </ul>
+    </section>
+
+    <section>
+        <h2>See pharmacist</h2>
+        <ul>
+            {#for ticket in view.seePharmacist}
+                <li class="ticket">
+                    <span class="number">#{ticket.id}</span>
+                    <small>{ticket.stage}</small>
+                </li>
+            {/for}
+        </ul>
+    </section>
+</div>

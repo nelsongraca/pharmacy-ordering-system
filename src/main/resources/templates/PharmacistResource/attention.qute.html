@@ -1,0 +1,16 @@
+<h3>Needs attention</h3>
+{#if view.attention.isEmpty()}
+    <p>Nothing to resolve.</p>
+{#else}
+    <ul>
+        {#for item in view.attention}
+            <li>
+                <strong>#{item.id}</strong> — {item.status}
+                {#for line in item.lines}
+                    <span>{line.medication} × {line.amount}</span>
+                {/for}
+                <button hx-post="/pharmacist/dismiss/{item.id}" hx-target="#attention" hx-swap="innerHTML">Resolved</button>
+            </li>
+        {/for}
+    </ul>
+{/if}

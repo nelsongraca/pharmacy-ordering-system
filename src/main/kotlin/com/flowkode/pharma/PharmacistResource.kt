@@ -13,11 +13,15 @@ data class OrderLine(val medication: String, val amount: Long)
 
 data class OrderCard(val id: Long, val code: String, val status: String, val lines: List<OrderLine>)
 
+/** A problem order the pharmacist still has to resolve. */
+data class Attention(val id: Long, val status: String, val lines: List<OrderLine>)
+
 data class PharmacistView(
     val role: String = PharmacistRole.APPROVALS.name,
     val waiting: Long = 0,
     val card: OrderCard? = null,
     val message: String? = null,
+    val attention: List<Attention> = emptyList(),
 )
 
 @Path("/pharmacist")
@@ -36,12 +40,17 @@ class PharmacistResource(private val orderService: OrderService) {
 
         @JvmStatic
         external fun counts(view: PharmacistView): TemplateInstance
+
+        @JvmStatic
+        external fun attention(view: PharmacistView): TemplateInstance
     }
 
     @GET
     fun index(@QueryParam("role") role: String?): TemplateInstance {
         val parsed = role(role)
-        return Templates.console(PharmacistView(role = parsed.name, waiting = orderService.countWaiting(parsed)))
+        return Templates.console(
+            PharmacistView(role = parsed.name, waiting = orderService.countWaiting(parsed), attention = attention()),
+        )
     }
 
     @POST
@@ -78,6 +87,23 @@ class PharmacistResource(private val orderService: OrderService) {
         if (orderService.handover(id)) Templates.card(PharmacistView(message = "Ticket $id handed over. Take the next one."))
         else Templates.card(PharmacistView(message = "That order changed. Take the next one."))
 
+    @POST
+    @Path("call/{id}")
+    fun call(@PathParam("id") id: Long): TemplateInstance =
+        if (orderService.call(id)) Templates.card(PharmacistView(message = "Calling ticket $id."))
+        else Templates.card(PharmacistView(message = "That order changed. Take the next one."))
+
+    @POST
+    @Path("dismiss/{id}")
+    fun dismiss(@PathParam("id") id: Long): TemplateInstance {
+        orderService.dismiss(id)
+        return Templates.attention(PharmacistView(attention = attention()))
+    }
+
+    @GET
+    @Path("attention")
+    fun attentionFragment(): TemplateInstance = Templates.attention(PharmacistView(attention = attention()))
+
     @GET
     @Path("counts")
     fun counts(@QueryParam("role") role: String?): TemplateInstance {
@@ -99,5 +125,16 @@ class PharmacistResource(private val orderService: OrderService) {
                 status = order.status.name,
                 lines = order.items.map { OrderLine(it.medication.name, it.amount) },
             )
+        }
+
+    private fun attention(): List<Attention> =
+        transactional {
+            Order.attentionOrders().map { order ->
+                Attention(
+                    id = order.id!!,
+                    status = order.status.name,
+                    lines = order.items.map { OrderLine(it.medication.name, it.amount) },
+                )
+            }
         }
 }

@@ -18,6 +18,8 @@
 
             <div id="counts" hx-get="/pharmacist/counts?role={view.role}" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
 
+            <div id="attention" hx-get="/pharmacist/attention" hx-trigger="load, every 5s" hx-swap="innerHTML"></div>
+
             <div id="card">No order yet. Press "Take next".</div>
         </main>
     {/body}

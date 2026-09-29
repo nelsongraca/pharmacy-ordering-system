@@ -14,6 +14,7 @@
             <button hx-post="/pharmacist/approve/{view.card.id}" hx-target="#card" hx-swap="innerHTML">Approve</button>
             <button hx-post="/pharmacist/reject/{view.card.id}" hx-target="#card" hx-swap="innerHTML">Reject</button>
         {#else if view.card.status == 'READY'}
+            <button hx-post="/pharmacist/call/{view.card.id}" hx-target="#card" hx-swap="innerHTML">Call patient</button>
             <button hx-post="/pharmacist/handover/{view.card.id}" hx-target="#card" hx-swap="innerHTML">Handed over</button>
         {/if}
     </article>

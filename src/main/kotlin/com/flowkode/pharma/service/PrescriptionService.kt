@@ -16,7 +16,12 @@ class PrescriptionService {
 
     /** medication id -> quantity, one digit per id starting at 1. */
     fun fetchPrescription(prescriptionNumber: String): Map<Long, Long> {
-        val match = extractionPattern.matchEntire(prescriptionNumber.trim())
+        val code = prescriptionNumber.trim().uppercase()
+
+        // Demo hook: pretend the external prescription source is down.
+        if (code == UNAVAILABLE_CODE) throw PrescriptionUnavailableException()
+
+        val match = extractionPattern.matchEntire(code)
             ?: throw IllegalArgumentException("Invalid prescription number")
 
         val items = match.groupValues
@@ -27,5 +32,9 @@ class PrescriptionService {
 
         if (items.isEmpty()) throw IllegalArgumentException("Invalid prescription number")
         return items
+    }
+
+    companion object {
+        private const val UNAVAILABLE_CODE = "P-99999"
     }
 }

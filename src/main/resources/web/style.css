@@ -1,1 +1,28 @@
 @import "@picocss/pico/css/pico.classless.min.css";
+
+.board .columns {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2rem;
+}
+
+.board ul {
+    list-style: none;
+    padding: 0;
+}
+
+.board .number {
+    display: block;
+    font-size: 3rem;
+    font-weight: 700;
+}
+
+.board .delayed {
+    display: block;
+    font-size: 0.4em;
+    color: var(--pico-del-color);
+}
+
+.board .calling .number {
+    color: var(--pico-primary);
+}

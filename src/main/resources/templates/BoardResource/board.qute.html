@@ -1,0 +1,12 @@
+{#include base theme='dark'}
+    {#body}
+        <main class="container board" hx-ext="sse" sse-connect="/board/events">
+            <h1>Prescription board</h1>
+
+            <div id="columns"
+                 hx-get="/board/columns"
+                 hx-trigger="load, sse:changed throttle:500ms, every 30s"
+                 hx-swap="innerHTML"></div>
+        </main>
+    {/body}
+{/include}

@@ -1,8 +1,3 @@
-quarkus:
-  datasource:
-    devservices:
-      port: 5432
-
 mp:
   messaging:
     outgoing:
@@ -11,6 +6,12 @@ mp:
         exchange:
           name: orders
         routing-key: orders.packaging
+      status:
+        connector: smallrye-rabbitmq
+        exchange:
+          name: orders.status
+          type: fanout
+          durable: true
     incoming:
       packager:
         connector: smallrye-rabbitmq
@@ -19,6 +20,42 @@ mp:
         exchange:
           name: orders
         routing-key: orders.packaging
+        # A message the packager rejects (throws on) is dead-lettered instead of lost.
+        auto-bind-dlq: true
+        dlx:
+          declare: true
+        dead-letter-exchange: orders.dlx
+        dead-letter-exchange-type: direct
+        dead-letter-routing-key: packaging.failed
+        dead-letter-queue-name: orders.packaging.dlq
+      packaging-dlq:
+        connector: smallrye-rabbitmq
+        queue:
+          name: orders.packaging.dlq
+        exchange:
+          name: orders.dlx
+          type: direct
+        routing-key: packaging.failed
+      # Every app instance gets its own throwaway queue on the fanout, so each instance
+      # (and every SSE client it serves) sees every status change. The name is random per
+      # boot; exclusive + auto-delete means RabbitMQ removes it when the instance disconnects.
+      status-feed:
+        connector: smallrye-rabbitmq
+        exchange:
+          name: orders.status
+          type: fanout
+          durable: true
+        queue:
+          name: "orders.status.${random.uuid}"
+          durable: false
+          exclusive: true
+          auto-delete: true
+
+"%dev":
+  quarkus:
+    datasource:
+      devservices:
+        port: 5432
 
 "%test":
   mp:
@@ -33,3 +70,13 @@ mp:
           exchange:
             name: orders
           routing-key: orders.packaging
+        status-test:
+          connector: smallrye-rabbitmq
+          exchange:
+            name: orders.status
+            type: fanout
+            durable: true
+          queue:
+            name: orders.status.test
+            durable: false
+            auto-delete: true

@@ -12,6 +12,7 @@ import org.jboss.logging.Logger
 class OrderService(
     private val prescriptionService: PrescriptionService,
     private val stockService: StockService,
+    private val statusPublisher: StatusPublisher,
 ) {
 
     private val log = Logger.getLogger(OrderService::class.java)
@@ -20,20 +21,47 @@ class OrderService(
     lateinit var packaging: Emitter<OrderPayload>
 
     fun create(prescriptionNumber: String): OrderResult {
-        val items = prescriptionService.fetchPrescription(prescriptionNumber)
+        val code = prescriptionNumber.trim().uppercase()
+
+        val items = try {
+            prescriptionService.fetchPrescription(code)
+        }
+        catch (ex: PrescriptionUnavailableException) {
+            log.error("Prescription source unavailable", ex)
+            return OrderResult.Unavailable
+        }
+
+        // best-effort guard against double submits; not race-proof (no DB partial index, see DESIGN.md)
+        if (hasActiveOrder(code)) return OrderResult.AlreadyActive
 
         val ticket = try {
-            transactional { reserveAndCreate(prescriptionNumber, items) }
+            transactional { reserveAndCreate(code, items) }
         }
         catch (ex: NoStockException) {
             //record the failure in its own transaction
             //todo: not happy with this approach
-            transactional { createOutOfStock(prescriptionNumber) }
+            val orderId = transactional { createOutOfStock(code) }
+            statusPublisher.publish(orderId, PrescriptionStatus.OUT_OF_STOCK)
             return OrderResult.OutOfStock(ex.medicationId)
         }
 
+        statusPublisher.publish(ticket, PrescriptionStatus.AWAITING_APPROVAL)
         return OrderResult.Placed(ticket)
     }
+
+    private fun hasActiveOrder(code: String): Boolean =
+        transactional {
+            Order.count(
+                "prescriptionCode = ?1 and status in ?2",
+                code,
+                listOf(
+                    PrescriptionStatus.AWAITING_APPROVAL,
+                    PrescriptionStatus.IN_REVIEW,
+                    PrescriptionStatus.PACKAGING,
+                    PrescriptionStatus.READY,
+                ),
+            ) > 0
+        }
 
     // get next from db, based on the role the pharmacist works
     fun claimNext(role: PharmacistRole): Long? =
@@ -59,6 +87,8 @@ class OrderService(
         val approved = transactional { Order.doTransition(id, PrescriptionStatus.IN_REVIEW, PrescriptionStatus.PACKAGING) }
         if (!approved) return false
 
+        statusPublisher.publish(id, PrescriptionStatus.PACKAGING)
+
         try {
             packaging.send(OrderPayload(id))
         }
@@ -68,21 +98,46 @@ class OrderService(
         return true
     }
 
-    fun reject(id: Long): Boolean =
-        transactional {
+    fun reject(id: Long): Boolean {
+        val rejected = transactional {
             if (!Order.rejectFromReview(id)) return@transactional false
 
             stockService.release(Order.findById(id)!!)
             true
         }
 
-    fun handover(id: Long): Boolean =
-        transactional {
+        if (rejected) statusPublisher.publish(id, PrescriptionStatus.REJECTED)
+        return rejected
+    }
+
+    fun handover(id: Long): Boolean {
+        val completed = transactional {
             if (!Order.doTransition(id, PrescriptionStatus.READY, PrescriptionStatus.COMPLETED)) return@transactional false
 
             stockService.consume(Order.findById(id)!!)
             true
         }
+
+        if (completed) statusPublisher.publish(id, PrescriptionStatus.COMPLETED)
+        return completed
+    }
+
+    /** READY stays READY; we only record that the ticket number was called out (board highlights it briefly). */
+    fun call(id: Long): Boolean {
+        val called = transactional { Order.markCalled(id) }
+        if (called) statusPublisher.publish(id, PrescriptionStatus.READY)
+        return called
+    }
+
+    fun dismiss(id: Long): Boolean {
+        val status = transactional {
+            if (!Order.dismiss(id)) return@transactional null
+            Order.findById(id)?.status
+        } ?: return false
+
+        statusPublisher.publish(id, status)
+        return true
+    }
 
     private fun reserveAndCreate(code: String, items: Map<Long, Long>): Long {
 
@@ -110,11 +165,12 @@ class OrderService(
         return order.id!!
     }
 
-    private fun createOutOfStock(code: String) {
-        Order().apply {
+    private fun createOutOfStock(code: String): Long {
+        val order = Order().apply {
             prescriptionCode = code
             status = PrescriptionStatus.OUT_OF_STOCK
         }
-            .persist()
+        order.persistAndFlush()
+        return order.id!!
     }
 }

@@ -1,4 +1,5 @@
 import 'htmx.org';
+import 'htmx-ext-sse';
 
 window.clearAfter = function(selector, timeout) {
     setTimeout(() => {
