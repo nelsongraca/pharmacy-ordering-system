@@ -1,5 +1,6 @@
 package com.flowkode.pharma.service
 
+import com.flowkode.pharma.board.BoardTicket
 import com.flowkode.pharma.domain.Order
 import com.flowkode.pharma.domain.PrescriptionStatus
 import com.flowkode.pharma.dto.OrderPayload
@@ -18,7 +19,7 @@ class PackagerService(private val statusPublisher: StatusPublisher) {
         private const val DELAY_MAX_MS = 8_000L
 
         /** Demo hook: an order for this code always fails packaging, so it lands in the DLQ. */
-        private const val FAIL_CODE = "P-00009"
+        private const val FAIL_CODE = "P-000009"
     }
 
 
@@ -39,9 +40,11 @@ class PackagerService(private val statusPublisher: StatusPublisher) {
             ThreadLocalRandom.current()
                 .nextLong(DELAY_MIN_MS, DELAY_MAX_MS + 1)
         )
-        val ready = transactional {
-            Order.doTransition(orderId, PrescriptionStatus.PACKAGING, PrescriptionStatus.READY)
-        }
-        if (ready) statusPublisher.publish(orderId, PrescriptionStatus.READY)
+        val ticket = transactional {
+            if (!Order.doTransition(orderId, PrescriptionStatus.PACKAGING, PrescriptionStatus.READY)) return@transactional null
+            BoardTicket.forOrder(Order.findById(orderId)!!)
+        } ?: return
+
+        statusPublisher.publish(ticket)
     }
 }

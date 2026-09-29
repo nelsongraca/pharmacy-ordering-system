@@ -17,14 +17,14 @@ import java.util.concurrent.TimeUnit
 @QuarkusTest
 class OrderServiceTest {
 
+    private val WHO = "test-console"
+
     @Inject
     lateinit var orderService: OrderService
 
     @Inject
     lateinit var packagingConsumer: PackagingTestConsumer
 
-    @Suppress("PropertyName")
-    private val WHO = "tester"
 
     private val seededStock = mapOf(1L to 5L, 2L to 10L, 3L to 15L, 4L to 20L, 5L to 25L)
 
@@ -56,14 +56,14 @@ class OrderServiceTest {
     @Test
     fun allZeroNumberIsInvalid() {
         assertThrows(IllegalArgumentException::class.java) {
-            orderService.create("P-00000")
+            orderService.create("P-000000")
         }
     }
 
     @Test
     @Transactional
     fun validPrescriptionReservesStockAndCreatesOrder() {
-        val result = orderService.create("P-10000")
+        val result = orderService.create("P-100000")
 
         assertTrue(result is OrderResult.Placed)
 
@@ -98,7 +98,7 @@ class OrderServiceTest {
     @Test
     @Transactional
     fun shortageLeavesNothingReservedAndRecordsOutOfStock() {
-        val result = orderService.create("P-90000") // 9 Amoxicillin, only 5 on hand
+        val result = orderService.create("P-900000") // 9 Amoxicillin, only 5 on hand
 
         assertEquals(OrderResult.OutOfStock(1L), result)
         assertEquals(0L, Medication.findById(1L)!!.reserved)
@@ -109,7 +109,7 @@ class OrderServiceTest {
     fun reservationIsAllOrNothing() {
         transactional { Medication.findById(2L)!!.stock = 8L }
 
-        val result = orderService.create("P-19000") // 1 Amoxicillin (ok) + 9 Ibuprofen (only 8)
+        val result = orderService.create("P-190000") // 1 Amoxicillin (ok) + 9 Ibuprofen (only 8)
 
         assertEquals(OrderResult.OutOfStock(2L), result)
         transactional {
@@ -124,7 +124,7 @@ class OrderServiceTest {
 
         val threads = 10
         // distinct prescriptions, each wanting one unit of medication 1 and a different amount of medication 5
-        val codes = (0..9).map { "P-1000$it" }
+        val codes = (0..9).map { "P-10000$it" }
         val pool = Executors.newFixedThreadPool(threads)
         val latch = CountDownLatch(1)
         try {
@@ -151,8 +151,8 @@ class OrderServiceTest {
 
     @Test
     fun claimNextReturnsOldestFirstAndNullWhenEmpty() {
-        val first = (orderService.create("P-10000") as OrderResult.Placed).ticket
-        val second = (orderService.create("P-20000") as OrderResult.Placed).ticket
+        val first = (orderService.create("P-100000") as OrderResult.Placed).ticket
+        val second = (orderService.create("P-200000") as OrderResult.Placed).ticket
 
         assertEquals(first, orderService.claimNext(PharmacistRole.APPROVALS, WHO))
         assertEquals(second, orderService.claimNext(PharmacistRole.APPROVALS, WHO))
@@ -162,7 +162,7 @@ class OrderServiceTest {
     @Test
     fun parallelClaimHandsEachOrderOutOnce() {
         // one unit each of five different medications, so five distinct orders exist to be claimed
-        val codes = listOf("P-10000", "P-01000", "P-00100", "P-00010", "P-00001")
+        val codes = listOf("P-100000", "P-010000", "P-001000", "P-000100", "P-000001")
         val tickets = codes.map { (orderService.create(it) as OrderResult.Placed).ticket }
 
         val threads = 10
@@ -188,7 +188,7 @@ class OrderServiceTest {
 
     @Test
     fun approveMovesToPackagingAndPublishes() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
         assertEquals(ticket, orderService.claimNext(PharmacistRole.APPROVALS, WHO))
 
         assertTrue(orderService.approve(ticket))
@@ -199,7 +199,7 @@ class OrderServiceTest {
 
     @Test
     fun rejectReleasesStockExactlyOnce() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
         orderService.claimNext(PharmacistRole.APPROVALS, WHO)
 
         assertTrue(orderService.reject(ticket))
@@ -213,38 +213,38 @@ class OrderServiceTest {
 
     @Test
     fun bothRolePrefersDeliveryOverApprovals() {
-        val ready = readyOrder("P-01000")
-        orderService.create("P-10000") // waits for approvals
+        val ready = readyOrder("P-010000")
+        orderService.create("P-100000") // waits for approvals
 
         assertEquals(ready, orderService.claimNext(PharmacistRole.BOTH, WHO))
     }
 
     @Test
     fun deliveriesRoleIgnoresApprovals() {
-        orderService.create("P-10000")
+        orderService.create("P-100000")
 
         assertNull(orderService.claimNext(PharmacistRole.DELIVERIES, WHO))
     }
 
     @Test
     fun approvalsRoleIgnoresReady() {
-        readyOrder("P-10000")
+        readyOrder("P-100000")
 
         assertNull(orderService.claimNext(PharmacistRole.APPROVALS, WHO))
     }
 
     @Test
     fun samePrescriptionCanBeOrderedAgainAfterItCompletes() {
-        val first = readyOrder("P-10000")
+        val first = readyOrder("P-100000")
         assertEquals(first, orderService.claimNext(PharmacistRole.DELIVERIES, WHO))
         assertTrue(orderService.handover(first, WHO))
 
-        assertTrue(orderService.create("P-10000") is OrderResult.Placed)
+        assertTrue(orderService.create("P-100000") is OrderResult.Placed)
     }
 
     @Test
     fun callIsIdempotent() {
-        val ticket = readyOrder("P-10000")
+        val ticket = readyOrder("P-100000")
         assertEquals(ticket, orderService.claimNext(PharmacistRole.DELIVERIES, WHO)) // must hold it first
 
         assertTrue(orderService.call(ticket, WHO))
@@ -253,7 +253,7 @@ class OrderServiceTest {
 
     @Test
     fun dismissIsIdempotent() {
-        orderService.create("P-90000") // 9 Amoxicillin, only 5 on hand -> OUT_OF_STOCK
+        orderService.create("P-900000") // 9 Amoxicillin, only 5 on hand -> OUT_OF_STOCK
         val ticket = transactional {
             Order.find("status = ?1", PrescriptionStatus.OUT_OF_STOCK).firstResult()!!.id!!
         }
@@ -264,7 +264,7 @@ class OrderServiceTest {
 
     @Test
     fun approveAfterRejectIsANoOp() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
         orderService.claimNext(PharmacistRole.APPROVALS, WHO)
 
         assertTrue(orderService.reject(ticket))
@@ -273,49 +273,48 @@ class OrderServiceTest {
 
     @Test
     fun claimIsDurableAndSkippedByTheNextClaim() {
-        val ticket = readyOrder("P-10000")
+        val ticket = readyOrder("P-100000")
 
         assertEquals(ticket, orderService.claimNext(PharmacistRole.DELIVERIES, WHO))
-        // a second take skips the order already held (claimedBy is not null)
-        assertNull(orderService.claimNext(PharmacistRole.DELIVERIES, "someone-else"))
+        // a second take skips the order already held (claimedAt is not null)
+        assertNull(orderService.claimNext(PharmacistRole.DELIVERIES, WHO))
 
         transactional {
             val order = Order.findById(ticket)!!
-            assertEquals(WHO, order.claimedBy)
+            assertNotNull(order.claimedAt)
             assertEquals(PrescriptionStatus.READY, order.status) // claiming a delivery keeps it READY
         }
     }
 
     @Test
-    fun heldByReturnsTheOrderThePharmacistHolds() {
-        val ticket = readyOrder("P-10000")
+    fun heldReturnsTheHeldOrder() {
+        val ticket = readyOrder("P-100000")
         assertEquals(ticket, orderService.claimNext(PharmacistRole.DELIVERIES, WHO))
 
-        assertEquals(ticket, orderService.heldBy(WHO))
-        assertNull(orderService.heldBy("someone-else"))
+        assertEquals(ticket, orderService.held(WHO))
     }
 
     @Test
-    fun handoverOnlyWorksForTheHolder() {
-        val ticket = readyOrder("P-10000")
-        assertEquals(ticket, orderService.claimNext(PharmacistRole.DELIVERIES, WHO))
+    fun handoverRequiresAClaim() {
+        val ticket = readyOrder("P-100000")
 
-        assertFalse(orderService.handover(ticket, "someone-else"))
+        assertFalse(orderService.handover(ticket, WHO)) // not held yet
+        assertEquals(ticket, orderService.claimNext(PharmacistRole.DELIVERIES, WHO))
         assertTrue(orderService.handover(ticket, WHO))
 
-        transactional { assertNull(Order.findById(ticket)!!.claimedBy) } // cleared on completion
+        transactional { assertNull(Order.findById(ticket)!!.claimedAt) } // cleared on completion
     }
 
     @Test
     fun approvingClearsTheApprovalClaim() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
         orderService.claimNext(PharmacistRole.APPROVALS, WHO)
 
         assertTrue(orderService.approve(ticket))
 
         transactional {
             assertEquals(PrescriptionStatus.PACKAGING, Order.findById(ticket)!!.status)
-            assertNull(Order.findById(ticket)!!.claimedBy)
+            assertNull(Order.findById(ticket)!!.claimedAt)
         }
     }
 

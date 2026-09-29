@@ -17,7 +17,7 @@ import java.time.Instant
  * on demand, and `READY` delivery is claimed straight from the database.
  */
 @ApplicationScoped
-class Republisher(private val orderService: OrderService) {
+class Republisher(private val packagingPublisher: PackagingPublisher) {
 
     private val log = Logger.getLogger(Republisher::class.java)
 
@@ -32,7 +32,7 @@ class Republisher(private val orderService: OrderService) {
 
         if (stalled.isNotEmpty()) {
             log.infof("Republishing packaging for stalled orders %s", stalled)
-            stalled.forEach { orderService.publishPackaging(it) }
+            stalled.forEach { packagingPublisher.publish(it) }
         }
     }
 }

@@ -1,11 +1,9 @@
 package com.flowkode.pharma.service
 
+import com.flowkode.pharma.board.BoardTicket
 import com.flowkode.pharma.domain.*
-import com.flowkode.pharma.dto.OrderPayload
 import com.flowkode.pharma.util.transactional
 import jakarta.enterprise.context.ApplicationScoped
-import org.eclipse.microprofile.reactive.messaging.Channel
-import org.eclipse.microprofile.reactive.messaging.Emitter
 import org.jboss.logging.Logger
 
 @ApplicationScoped
@@ -13,12 +11,10 @@ class OrderService(
     private val prescriptionService: PrescriptionService,
     private val stockService: StockService,
     private val statusPublisher: StatusPublisher,
+    private val packagingPublisher: PackagingPublisher,
 ) {
 
     private val log = Logger.getLogger(OrderService::class.java)
-
-    @Channel("packaging")
-    lateinit var packaging: Emitter<OrderPayload>
 
     fun create(prescriptionNumber: String): OrderResult {
         val code = prescriptionNumber.trim().uppercase()
@@ -34,19 +30,19 @@ class OrderService(
         // best-effort guard against double submits; not race-proof (no DB partial index, see DESIGN.md)
         if (hasActiveOrder(code)) return OrderResult.AlreadyActive
 
-        val ticket = try {
+        val placed = try {
             transactional { reserveAndCreate(code, items) }
         }
         catch (ex: NoStockException) {
             //record the failure in its own transaction
             //todo: not happy with this approach
-            val orderId = transactional { createOutOfStock(code) }
-            statusPublisher.publish(orderId, PrescriptionStatus.OUT_OF_STOCK)
+            val order = transactional { createOutOfStock(code) }
+            statusPublisher.publish(BoardTicket.forOrder(order))
             return OrderResult.OutOfStock(ex.medicationId)
         }
 
-        statusPublisher.publish(ticket, PrescriptionStatus.AWAITING_APPROVAL)
-        return OrderResult.Placed(ticket)
+        statusPublisher.publish(BoardTicket.forOrder(placed))
+        return OrderResult.Placed(placed.id!!)
     }
 
     private fun hasActiveOrder(code: String): Boolean =
@@ -74,8 +70,8 @@ class OrderService(
             }
         }
 
-    /** The order this pharmacist is holding, if any. They take one at a time. */
-    fun heldBy(by: String): Long? =
+    /** The order this console is holding, if any. It takes one at a time. */
+    fun held(by: String): Long? =
         transactional { Order.heldBy(by)?.id }
 
     fun countWaiting(role: PharmacistRole): Long =
@@ -88,67 +84,43 @@ class OrderService(
         }
 
     fun approve(id: Long): Boolean {
-        val approved = transactional { Order.doTransition(id, PrescriptionStatus.IN_REVIEW, PrescriptionStatus.PACKAGING) }
-        if (!approved) return false
-
-        statusPublisher.publish(id, PrescriptionStatus.PACKAGING)
-        publishPackaging(id)
-        return true
+        val ok = transition(id, { Order.doTransition(id, PrescriptionStatus.IN_REVIEW, PrescriptionStatus.PACKAGING) })
+        if (ok) packagingPublisher.publish(id)
+        return ok
     }
 
-    /** Send the packaging work message and record it, so the republisher can recover if it is lost. */
-    fun publishPackaging(id: Long) {
-        try {
-            packaging.send(OrderPayload(id))
-            transactional { Order.markPublished(id) }
-        }
-        catch (ex: Exception) {
-            log.errorf(ex, "Failed to publish packaging for order %d", id)
-        }
-    }
+    fun reject(id: Long): Boolean =
+        transition(id, { Order.rejectFromReview(id) }) { stockService.release(it) }
 
-    fun reject(id: Long): Boolean {
-        val rejected = transactional {
-            if (!Order.rejectFromReview(id)) return@transactional false
+    fun handover(id: Long, by: String): Boolean =
+        transition(id, { Order.completeFromReady(id, by) }) { stockService.consume(it) }
 
-            stockService.release(Order.findById(id)!!)
-            true
-        }
+    /** READY stays READY; we only record that the ticket number was called out (board highlights it). */
+    fun call(id: Long, by: String): Boolean =
+        transition(id, { Order.markCalled(id, by) })
 
-        if (rejected) statusPublisher.publish(id, PrescriptionStatus.REJECTED)
-        return rejected
-    }
+    fun dismiss(id: Long): Boolean =
+        transition(id, { Order.dismiss(id) })
 
-    fun handover(id: Long, by: String): Boolean {
-        val completed = transactional {
-            if (!Order.completeFromReady(id, by)) return@transactional false
-
-            stockService.consume(Order.findById(id)!!)
-            true
-        }
-
-        if (completed) statusPublisher.publish(id, PrescriptionStatus.COMPLETED)
-        return completed
-    }
-
-    /** READY stays READY; we only record that the ticket number was called out (board highlights it briefly). */
-    fun call(id: Long, by: String): Boolean {
-        val called = transactional { Order.markCalled(id, by) }
-        if (called) statusPublisher.publish(id, PrescriptionStatus.READY)
-        return called
-    }
-
-    fun dismiss(id: Long): Boolean {
-        val status = transactional {
-            if (!Order.dismiss(id)) return@transactional null
-            Order.findById(id)?.status
+    /**
+     * Runs a conditional transition; on success builds the ticket from the committed row and
+     * publishes it. [effect] applies any stock change in the same transaction. Returns false when
+     * the transition lost a race or was repeated (both are no-ops).
+     */
+    private fun transition(id: Long, guard: () -> Boolean, effect: (Order) -> Unit = {}): Boolean {
+        val ticket = transactional {
+            if (!guard()) return@transactional null
+            // load after the guard: the guard is a bulk update, so a pre-load would be stale
+            val order = Order.findById(id) ?: return@transactional null
+            effect(order)
+            BoardTicket.forOrder(order)
         } ?: return false
 
-        statusPublisher.publish(id, status)
+        statusPublisher.publish(ticket)
         return true
     }
 
-    private fun reserveAndCreate(code: String, items: Map<Long, Long>): Long {
+    private fun reserveAndCreate(code: String, items: Map<Long, Long>): Order {
 
         for ((medicationId, quantity) in items.entries.sortedBy { it.key }) {
             // false means no stock or missing
@@ -171,15 +143,15 @@ class OrderService(
         }
 
         order.persistAndFlush()
-        return order.id!!
+        return order
     }
 
-    private fun createOutOfStock(code: String): Long {
+    private fun createOutOfStock(code: String): Order {
         val order = Order().apply {
             prescriptionCode = code
             status = PrescriptionStatus.OUT_OF_STOCK
         }
         order.persistAndFlush()
-        return order.id!!
+        return order
     }
 }

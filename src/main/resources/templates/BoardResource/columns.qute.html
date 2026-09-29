@@ -1,12 +1,11 @@
 <div class="columns">
     <section>
         <h2>Preparing</h2>
-        <ul>
+        <ul data-column="preparing">
             {#for ticket in view.preparing}
-                <li class="ticket">
-                    <span class="number">#{ticket.id}</span>
+                <li class="ticket" data-id="{ticket.id}" data-calling="{ticket.calling}" data-sort-key="{ticket.sortKey}">
+                    <span class="number">{ticket.id}</span>
                     <small>{ticket.stage}</small>
-                    {#if ticket.delayed}<span class="delayed">taking longer than usual</span>{/if}
                 </li>
             {/for}
         </ul>
@@ -14,23 +13,22 @@
 
     <section>
         <h2>Ready</h2>
-        <ul>
+        <ul data-column="ready">
             {#for ticket in view.ready}
-                {#if ticket.calling}
-                    <li class="ticket calling"><span class="number">#{ticket.id}</span><small>Now calling</small></li>
-                {#else}
-                    <li class="ticket"><span class="number">#{ticket.id}</span></li>
-                {/if}
+                <li class="ticket{#if ticket.calling} calling{/if}" data-id="{ticket.id}" data-calling="{ticket.calling}" data-sort-key="{ticket.sortKey}">
+                    <span class="number">{ticket.id}</span>
+                    {#if ticket.calling}<small>Now calling</small>{/if}
+                </li>
             {/for}
         </ul>
     </section>
 
     <section>
         <h2>See pharmacist</h2>
-        <ul>
+        <ul data-column="seePharmacist">
             {#for ticket in view.seePharmacist}
-                <li class="ticket">
-                    <span class="number">#{ticket.id}</span>
+                <li class="ticket" data-id="{ticket.id}" data-calling="{ticket.calling}" data-sort-key="{ticket.sortKey}">
+                    <span class="number">{ticket.id}</span>
                     <small>{ticket.stage}</small>
                 </li>
             {/for}

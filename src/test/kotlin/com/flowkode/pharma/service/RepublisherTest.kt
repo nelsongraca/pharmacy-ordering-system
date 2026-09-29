@@ -18,6 +18,8 @@ import java.time.Instant
 @QuarkusTest
 class RepublisherTest {
 
+    private val WHO = "test-console"
+
     @Inject
     lateinit var orderService: OrderService
 
@@ -27,8 +29,6 @@ class RepublisherTest {
     @Inject
     lateinit var packagingConsumer: PackagingTestConsumer
 
-    @Suppress("PropertyName")
-    private val WHO = "tester"
     private val seededStock = mapOf(1L to 5L, 2L to 10L, 3L to 15L, 4L to 20L, 5L to 25L)
 
     @BeforeEach
@@ -92,7 +92,7 @@ class RepublisherTest {
 
     /** Create an order and move it to PACKAGING via a real approve, so lastPublishedAt is set. */
     private fun pacingOrder(): Long {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
         assertEquals(ticket, orderService.claimNext(PharmacistRole.APPROVALS, WHO))
         assertTrue(orderService.approve(ticket))
         return ticket

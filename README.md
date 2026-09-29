@@ -22,18 +22,18 @@ No other setup: no database to install, no broker to run.
 
 Then open:
 
-- Kiosk (patients): <http://localhost:8080/>
+- Landing page (links to the three UIs): <http://localhost:8080/>
+- Kiosk (patients): <http://localhost:8080/kiosk>
 - Board (wall screen): <http://localhost:8080/board>
 - Pharmacist console: <http://localhost:8080/pharmacist>
 
 ## Two-minute demo
 
-Prescription numbers are decoded locally: `P-` followed by five digits, where position *i* is
-the quantity of medication id *i* — 1 Amoxicillin, 2 Ibuprofen, 3 Lisinopril, 4 Metformin,
-5 Atorvastatin. Zero means "none". An optional sixth digit addresses the added favorite
-medication, 6 Methylphenidate.
+Prescription numbers are decoded locally: `P-` followed by six digits, where position *i* is
+the quantity of medication id *i*, 1 Amoxicillin, 2 Ibuprofen, 3 Lisinopril, 4 Metformin,
+5 Atorvastatin, 6 Methylphenidate. Zero means "none".
 
-1. **Kiosk** → `P-10000` → a ticket appears; the board shows it under **Preparing**. The form
+1. **Kiosk** → `P-100000` → a ticket appears; the board shows it under **Preparing**. The form
    resets itself after 10 seconds.
 2. **Pharmacist**, role *Approvals* → **Take next** → **Approve**. The ticket moves to **Ready**
    after the packager finishes (3–8 seconds). While holding an order, "Take next" is disabled.
@@ -42,11 +42,14 @@ medication, 6 Methylphenidate.
 4. Open **/board** in two windows to see live updates, and reload one to show that state
    recovers.
 5. **Failure hooks:**
-   - `P-60000` → out of stock: the ticket goes to the board's **See pharmacist** column.
-   - `P-99999` → prescription source outage: the kiosk shows an error and creates nothing.
-   - `P-00009` → the packager fails: after approval the order ends in **Failed** (routed
-     through the dead-letter queue) and its reserved stock is released.
-6. `P-000001` (six digits) → one Methylphenidate, the added favorite medication.
+    - `P-600000` → out of stock: the ticket goes to the board's **See pharmacist** column.
+    - `P-999999` → prescription source outage: the kiosk shows an error and creates nothing.
+    - `P-000009` → the packager fails: after approval the order ends in **Failed** (routed
+      through the dead-letter queue) and its reserved stock is released.
+6. `P-000001` → one Methylphenidate, the added favorite medication.
+
+The console cookie is per browser, so to watch two consoles hold orders independently open
+**/pharmacist** in two different browsers (or one private window).
 
 ## Tests
 
@@ -56,30 +59,21 @@ medication, 6 Methylphenidate.
 
 Docker must be running: the tests use Dev Services for PostgreSQL and RabbitMQ.
 
-## Assumptions
-
-- The prescription source is external and sits behind a client; the shipped implementation is a
-  fake that decodes the number locally.
-- Several pharmacists can work at once; each takes one order at a time (the claim is stored, so
-  "Take next" never hands the same order to two people) and picks a role (approvals, deliveries,
-  or both). A pharmacist is identified by a `?who=` name (defaults to `pharmacist`); there is no login.
-- The ticket number is the order id; it is what patients see and pharmacists call out.
-- The board shows ticket numbers only — never names or medications.
-- Orders are all-or-nothing, and intake is synchronous.
-
 ## Code map
 
-| Path | What it does |
-|---|---|
-| `KioskResource.kt`, `templates/KioskResource/` | Patient intake form and ticket |
-| `BoardResource.kt`, `templates/BoardResource/` | Live board, columns fragment, SSE |
-| `PharmacistResource.kt`, `templates/PharmacistResource/` | Pharmacist console and actions |
-| `service/OrderService.kt` | Intake, claims, and all status transitions |
-| `service/PackagerService.kt` | Simulated packaging consumer |
-| `service/DeadLetterService.kt` | Marks dead-lettered orders `FAILED` and releases stock |
-| `service/StatusPublisher.kt`, `service/StatusStream.kt` | Status events and the SSE broadcast |
-| `service/PrescriptionService.kt`, `service/StockService.kt` | Prescription decode; stock effects |
-| `domain/` | `Order`, `OrderItem`, `Medication`, `PrescriptionStatus` |
-| `resources/application.yaml` | RabbitMQ topology and dev config |
-| `resources/import.sql` | Seed medications |
-| `spec.md`, `DESIGN.md`, `notes.md` | Spec, design/decisions, scratch notes |
+| Path                                                                   | What it does                                                     |
+|------------------------------------------------------------------------|------------------------------------------------------------------|
+| `resources/KioskResource.kt`, `templates/KioskResource/`               | Patient intake form and ticket                                   |
+| `resources/BoardResource.kt`, `templates/BoardResource/`, `web/app.js` | Live board, initial columns, SSE `ticket` events                 |
+| `resources/PharmacistResource.kt`, `templates/PharmacistResource/`     | Pharmacist console and actions                                   |
+| `service/OrderService.kt`                                              | Intake, claims, and all status transitions                       |
+| `service/PackagerService.kt`                                           | Simulated packaging consumer                                     |
+| `service/DeadLetterService.kt`                                         | Marks dead-lettered orders `FAILED` and releases stock           |
+| `service/PackagingPublisher.kt`, `service/Republisher.kt`              | Package work message and its lost-publish recovery               |
+| `service/StatusPublisher.kt`, `service/StatusStream.kt`                | Status events and the SSE broadcast                              |
+| `service/PrescriptionService.kt`, `service/StockService.kt`            | Prescription decode; stock effects                               |
+| `dto/`                                                                 | `BoardTicket` (the board payload), `OrderPayload`, `OrderResult` |
+| `domain/`                                                              | `Order`, `OrderItem`, `Medication`, `PrescriptionStatus`         |
+| `resources/application.yaml`                                           | RabbitMQ topology and dev config                                 |
+| `resources/import.sql`                                                 | Seed medications                                                 |
+| `DESIGN.md`                                                            | Design, decisions and known limitations                          |

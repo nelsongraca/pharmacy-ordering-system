@@ -1,11 +1,12 @@
 {#include base theme='dark'}
     {#body}
-        <main class="container board" hx-ext="sse" sse-connect="/board/events">
+        <main class="container board" hx-ext="sse" sse-connect="/board/events" sse-swap="ticket">
             <h1>Prescription board</h1>
 
+            {! Initial load only. After that the browser keeps up from SSE `ticket` events. !}
             <div id="columns"
                  hx-get="/board/columns"
-                 hx-trigger="load, sse:changed throttle:500ms, every 30s"
+                 hx-trigger="load"
                  hx-swap="innerHTML"></div>
         </main>
     {/body}

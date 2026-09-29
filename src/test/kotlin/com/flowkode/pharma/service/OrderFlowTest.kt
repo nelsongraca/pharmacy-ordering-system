@@ -13,14 +13,14 @@ import org.junit.jupiter.api.Test
 @QuarkusTest
 class OrderFlowTest {
 
+    private val WHO = "test-console"
+
     @Inject
     lateinit var orderService: OrderService
 
     @Inject
     lateinit var packagerService: PackagerService
 
-    @Suppress("PropertyName")
-    private val WHO = "tester"
 
     private val seededStock = mapOf(1L to 5L, 2L to 10L, 3L to 15L, 4L to 20L, 5L to 25L)
 
@@ -42,7 +42,7 @@ class OrderFlowTest {
     /** Spec happy path: submit, approve, pack, deliver, hand over. */
     @Test
     fun happyPathPacksAndHandsOver() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
 
         assertEquals(ticket, orderService.claimNext(PharmacistRole.APPROVALS, WHO))
         assertTrue(orderService.approve(ticket))
@@ -62,7 +62,7 @@ class OrderFlowTest {
 
     @Test
     fun duplicatePackagingMessageChangesNothing() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
         orderService.claimNext(PharmacistRole.APPROVALS, WHO)
         orderService.approve(ticket)
 
@@ -78,7 +78,7 @@ class OrderFlowTest {
 
     @Test
     fun handoverOnAReadyOrderConsumesStockOnlyOnce() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
         orderService.claimNext(PharmacistRole.APPROVALS, WHO)
         orderService.approve(ticket)
         transactional {
@@ -96,14 +96,14 @@ class OrderFlowTest {
     /** One AWAITING_APPROVAL and one READY order: the `status in ?1` count must handle both one and two values. */
     @Test
     fun countByStatusHandlesOneAndManyStatuses() {
-        val ready = (orderService.create("P-20000") as OrderResult.Placed).ticket
+        val ready = (orderService.create("P-200000") as OrderResult.Placed).ticket
         assertEquals(ready, orderService.claimNext(PharmacistRole.APPROVALS, WHO))
         orderService.approve(ready)
         transactional {
             Order.doTransition(ready, PrescriptionStatus.PACKAGING, PrescriptionStatus.READY)
         }
 
-        orderService.create("P-10000") // stays AWAITING_APPROVAL
+        orderService.create("P-100000") // stays AWAITING_APPROVAL
 
         transactional {
             assertEquals(1L, Order.countByStatus(PrescriptionStatus.AWAITING_APPROVAL))

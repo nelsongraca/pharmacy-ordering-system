@@ -4,14 +4,14 @@
 
             {! Shown on first load, after an error, and after the ticket auto-reset !}
             {#fragment id=form}
-                <form hx-post="/orders" hx-target="#kiosk" hx-swap="innerHTML" hx-disabled-elt="find button">
+                <form hx-post="/kiosk/orders" hx-target="#kiosk" hx-swap="innerHTML" hx-disabled-elt="find button">
                     <h1>Enter your prescription number</h1>
                     <input name="code"
                            value="{view.code ?: ''}"
-                           placeholder="P-12345"
+                           placeholder="P-123456"
                            required autofocus autocomplete="off" maxlength="12"
-                           pattern="[Pp]-[0-9][0-9][0-9][0-9][0-9]([0-9])?"
-                           title="Prescription numbers look like P-12345 (or P-123456)"
+                           pattern="[Pp]-[0-9][0-9][0-9][0-9][0-9][0-9]"
+                           title="Prescription numbers look like P-123456"
                            {#if view.error}aria-invalid="true" aria-describedby="code-error"{/if}>
                     {#if view.error}<small id="code-error">{view.error}</small>{/if}
                     <button>Get my number</button>

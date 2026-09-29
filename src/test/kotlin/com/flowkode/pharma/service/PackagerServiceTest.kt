@@ -17,14 +17,14 @@ import org.junit.jupiter.api.Test
 @QuarkusTest
 class PackagerServiceTest {
 
+    private val WHO = "test-console"
+
     @Inject
     lateinit var orderService: OrderService
 
     @Inject
     lateinit var packagerService: PackagerService
 
-    @Suppress("PropertyName")
-    private val WHO = "tester"
 
     private val seededStock = mapOf(1L to 5L, 2L to 10L, 3L to 15L, 4L to 20L, 5L to 25L)
 
@@ -45,7 +45,7 @@ class PackagerServiceTest {
 
     @Test
     fun ignoresAnOrderThatHasNotBeenApproved() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
 
         packagerService.consume(JsonObject().put("orderId", ticket))
 
@@ -54,7 +54,7 @@ class PackagerServiceTest {
 
     @Test
     fun ignoresAnOrderAlreadyMarkedReady() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
         orderService.claimNext(PharmacistRole.APPROVALS, WHO)
         orderService.approve(ticket)
         transactional { Order.doTransition(ticket, PrescriptionStatus.PACKAGING, PrescriptionStatus.READY) }

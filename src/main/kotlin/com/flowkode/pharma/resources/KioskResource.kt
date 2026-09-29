@@ -1,4 +1,4 @@
-package com.flowkode.pharma
+package com.flowkode.pharma.resources
 
 import com.flowkode.pharma.service.OrderResult
 import com.flowkode.pharma.service.OrderService
@@ -19,7 +19,7 @@ data class KioskView(
     val number: Long? = null,
 )
 
-@Path("/")
+@Path("/kiosk")
 @Produces(MediaType.TEXT_HTML)
 class KioskResource(private val orderService: OrderService) {
 
@@ -36,7 +36,7 @@ class KioskResource(private val orderService: OrderService) {
 
     /** Called by the ticket card 10 seconds after it appears. */
     @GET
-    @Path("kiosk/form")
+    @Path("/form")
     fun form(): TemplateInstance = Templates.`kiosk$form`(KioskView())
 
     /** Always answers 200: htmx does not swap 4xx/5xx responses, so errors are re-rendered forms. */

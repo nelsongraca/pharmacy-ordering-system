@@ -10,28 +10,27 @@ class PrescriptionServiceTest {
     private val service = PrescriptionService()
 
     @Test
-    fun decodesFiveDigits() {
-        assertEquals(mapOf(1L to 1L), service.fetchPrescription("P-10000"))
+    fun decodesSixDigits() {
+        assertEquals(mapOf(1L to 1L), service.fetchPrescription("P-100000"))
     }
 
     @Test
-    fun decodesSixDigitsForTheFavoriteMedication() {
+    fun decodesTheFavoriteMedication() {
         assertEquals(mapOf(1L to 1L, 6L to 2L), service.fetchPrescription("P-100002"))
     }
 
     @Test
     fun trimsAndUppercases() {
-        assertEquals(mapOf(2L to 3L), service.fetchPrescription("  p-03000  "))
+        assertEquals(mapOf(2L to 3L), service.fetchPrescription("  p-030000  "))
     }
 
     @Test
     fun dropsZeroDigits() {
-        assertEquals(mapOf(2L to 5L, 4L to 1L), service.fetchPrescription("P-05010"))
+        assertEquals(mapOf(2L to 5L, 4L to 1L), service.fetchPrescription("P-050100"))
     }
 
     @Test
     fun allZerosIsInvalid() {
-        assertThrows(IllegalArgumentException::class.java) { service.fetchPrescription("P-00000") }
         assertThrows(IllegalArgumentException::class.java) { service.fetchPrescription("P-000000") }
     }
 
@@ -42,13 +41,13 @@ class PrescriptionServiceTest {
 
     @Test
     fun malformedIsInvalid() {
-        listOf("P-1234", "12345", "P-1234567", "X-10000", "P-1O000").forEach {
+        listOf("P-12345", "P-1234", "123456", "P-1234567", "X-100000", "P-1O0000").forEach {
             assertThrows(IllegalArgumentException::class.java, { service.fetchPrescription(it) }, it)
         }
     }
 
     @Test
     fun sourceOutageCodeThrows() {
-        assertThrows(PrescriptionUnavailableException::class.java) { service.fetchPrescription("P-99999") }
+        assertThrows(PrescriptionUnavailableException::class.java) { service.fetchPrescription("P-999999") }
     }
 }

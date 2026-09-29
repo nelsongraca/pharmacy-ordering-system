@@ -13,10 +13,10 @@ class Order : PanacheEntityBase {
 
         /**
          * Locks the oldest order in any of [status] (oldest ticket first) and claims it for [by]:
-         * stamps `claimedBy`/`claimedAt`, and when [target] is given also moves the status.
-         * A null [target] claims without changing status (delivery keeps READY).
-         * `claimedBy is null` means only unclaimed orders are taken, so a second "Take next"
-         * cannot hand out an order already held. The write lock serializes concurrent claims.
+         * stamps `claimedBy`/`claimedAt`; when [target] is given it also moves the status. A null
+         * [target] claims without changing status (delivery keeps READY). `claimedBy is null` means
+         * only unclaimed orders are taken, so a second "Take next" (from any console) cannot hand out
+         * an order already held. The write lock serializes concurrent claims.
          */
         fun claimOldest(by: String, target: PrescriptionStatus?, vararg status: PrescriptionStatus): Long? {
             //ids are sequential so we can order by id, ideally we use an update date so we process the ones that changed more time ago
@@ -35,10 +35,13 @@ class Order : PanacheEntityBase {
             return order.id
         }
 
-        /** The order a pharmacist is currently holding, if any (one at a time). */
+        /** The order a specific console is holding, if any (one at a time). */
         fun heldBy(by: String): Order? =
-            find("claimedBy = ?1 and status in ?2 order by id", by, listOf(PrescriptionStatus.IN_REVIEW, PrescriptionStatus.READY))
-                .firstResult()
+            find(
+                "claimedBy = ?1 and status in ?2 order by id",
+                by,
+                listOf(PrescriptionStatus.IN_REVIEW, PrescriptionStatus.READY),
+            ).firstResult()
 
 
         fun doTransition(id: Long, from: PrescriptionStatus, to: PrescriptionStatus): Boolean {
@@ -71,7 +74,7 @@ class Order : PanacheEntityBase {
                 PrescriptionStatus.PACKAGING,
             ) == 1
 
-        /** READY -> COMPLETED, but only for the pharmacist holding the order. Clears the claim. */
+        /** READY -> COMPLETED, but only for the console holding the order. Clears the claim. */
         fun completeFromReady(id: Long, by: String): Boolean =
             update(
                 "status = ?1, statusChangedAt = ?2, claimedBy = null, claimedAt = null where id = ?3 and status = ?4 and claimedBy = ?5",
@@ -82,7 +85,7 @@ class Order : PanacheEntityBase {
                 by,
             ) == 1
 
-        /** READY -> READY (called) for the holder: remember that this ticket was called out, at most once. */
+        /** READY -> READY (called) for the holder: remember this ticket was called out, at most once. */
         fun markCalled(id: Long, by: String): Boolean =
             update(
                 "calledAt = ?1 where id = ?2 and status = ?3 and claimedBy = ?4 and calledAt is null",
@@ -127,29 +130,11 @@ class Order : PanacheEntityBase {
 
         /** Every order the board shows: in flight, ready, or a problem the pharmacist must resolve. */
         fun boardOrders(): List<Order> =
-            list(
-                "status in ?1 and dismissedAt is null order by id",
-                listOf(
-                    PrescriptionStatus.AWAITING_APPROVAL,
-                    PrescriptionStatus.IN_REVIEW,
-                    PrescriptionStatus.PACKAGING,
-                    PrescriptionStatus.READY,
-                    PrescriptionStatus.OUT_OF_STOCK,
-                    PrescriptionStatus.REJECTED,
-                    PrescriptionStatus.FAILED,
-                ),
-            )
+            list("status in ?1 and dismissedAt is null order by statusChangedAt, id", PrescriptionStatus.ON_BOARD.toList())
 
         /** Problem orders the pharmacist still has to resolve (or dismiss). */
         fun attentionOrders(): List<Order> =
-            list(
-                "status in ?1 and dismissedAt is null order by id",
-                listOf(
-                    PrescriptionStatus.OUT_OF_STOCK,
-                    PrescriptionStatus.REJECTED,
-                    PrescriptionStatus.FAILED,
-                ),
-            )
+            list("status in ?1 and dismissedAt is null order by statusChangedAt, id", PrescriptionStatus.PROBLEMS.toList())
 
 
     }
@@ -166,7 +151,7 @@ class Order : PanacheEntityBase {
     var calledAt: Instant? = null
     var dismissedAt: Instant? = null
 
-    /** Who currently holds this order (approvals review or delivery). Cleared on the next transition. */
+    /** Non-null while this order is held, naming the console that holds it. Cleared on the next transition. */
     var claimedBy: String? = null
     var claimedAt: Instant? = null
 

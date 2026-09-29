@@ -1,4 +1,4 @@
-package com.flowkode.pharma
+package com.flowkode.pharma.resources
 
 import com.flowkode.pharma.domain.Order
 import com.flowkode.pharma.domain.PharmacistRole
@@ -8,6 +8,9 @@ import io.quarkus.qute.CheckedTemplate
 import io.quarkus.qute.TemplateInstance
 import jakarta.ws.rs.*
 import jakarta.ws.rs.core.MediaType
+import jakarta.ws.rs.core.NewCookie
+import jakarta.ws.rs.core.Response
+import java.util.UUID
 
 data class OrderLine(val medication: String, val amount: Long)
 
@@ -17,8 +20,8 @@ data class OrderCard(val id: Long, val code: String, val status: String, val lin
 data class Attention(val id: Long, val status: String, val lines: List<OrderLine>)
 
 data class PharmacistView(
-    val role: String = PharmacistRole.APPROVALS.name,
-    val who: String = "pharmacist",
+    val role: String = PharmacistRole.BOTH.name,
+    val who: String = "",
     val waiting: Long = 0,
     val card: OrderCard? = null,
     val message: String? = null,
@@ -48,38 +51,39 @@ class PharmacistResource(private val orderService: OrderService) {
     }
 
     @GET
-    fun index(@QueryParam("role") role: String?, @QueryParam("who") who: String?): TemplateInstance {
+    fun index(@QueryParam("role") role: String?, @CookieParam("console") console: String?): Response {
         val parsed = role(role)
-        val name = who(who)
-        return Templates.console(
-            PharmacistView(
-                role = parsed.name,
-                who = name,
-                waiting = orderService.countWaiting(parsed),
-                attention = attention(),
-                holding = orderService.heldBy(name) != null,
-            ),
+        val who = console ?: UUID.randomUUID().toString()
+        val view = PharmacistView(
+            role = parsed.name,
+            who = who,
+            waiting = orderService.countWaiting(parsed),
+            attention = attention(),
+            holding = orderService.held(who) != null,
         )
+        val response = Response.ok(Templates.console(view))
+        // remember the console id so a reload keeps the same held order
+        return if (console == null) response.cookie(consoleCookie(who)).build() else response.build()
     }
 
     @POST
     @Path("take")
-    fun take(@QueryParam("role") role: String?, @QueryParam("who") who: String?): TemplateInstance {
+    fun take(@QueryParam("role") role: String?, @CookieParam("console") console: String?): TemplateInstance {
         val parsed = role(role)
-        val name = who(who)
+        val who = who(console)
 
-        // one order at a time: if already holding one, show it again instead of taking another
-        val held = orderService.heldBy(name)
-        val id = held ?: orderService.claimNext(parsed, name)
+        // one order at a time: if this console already holds one, show it again instead of taking another
+        val held = orderService.held(who)
+        val id = held ?: orderService.claimNext(parsed, who)
 
         if (id == null)
-            return Templates.card(PharmacistView(role = parsed.name, who = name, message = "No orders waiting."))
+            return Templates.card(PharmacistView(role = parsed.name, who = who, message = "No orders waiting."))
 
         val card = cardFor(id)
         if (card == null)
-            return Templates.card(PharmacistView(role = parsed.name, who = name, message = "That order disappeared."))
+            return Templates.card(PharmacistView(role = parsed.name, who = who, message = "That order disappeared."))
 
-        return Templates.card(PharmacistView(role = parsed.name, who = name, card = card, holding = true))
+        return Templates.card(PharmacistView(role = parsed.name, who = who, card = card, holding = true))
     }
 
     @POST
@@ -96,15 +100,23 @@ class PharmacistResource(private val orderService: OrderService) {
 
     @POST
     @Path("handover/{id}")
-    fun handover(@PathParam("id") id: Long, @QueryParam("who") who: String?): TemplateInstance =
-        if (orderService.handover(id, who(who))) Templates.card(PharmacistView(message = "Ticket $id handed over. Take the next one."))
+    fun handover(@PathParam("id") id: Long, @CookieParam("console") console: String?): TemplateInstance =
+        if (orderService.handover(id, who(console))) Templates.card(PharmacistView(message = "Ticket $id handed over. Take the next one."))
         else Templates.card(PharmacistView(message = "That order changed. Take the next one."))
 
     @POST
     @Path("call/{id}")
-    fun call(@PathParam("id") id: Long, @QueryParam("who") who: String?): TemplateInstance =
-        if (orderService.call(id, who(who))) Templates.card(PharmacistView(message = "Calling ticket $id."))
-        else Templates.card(PharmacistView(message = "That order changed. Take the next one."))
+    fun call(@PathParam("id") id: Long, @CookieParam("console") console: String?): TemplateInstance {
+        val who = who(console)
+        // a second "Call patient" is a no-op: show the same card again, no "order changed" scare
+        if (!orderService.call(id, who) && orderService.held(who) != id)
+            return Templates.card(PharmacistView(message = "That order changed. Take the next one."))
+
+        // keep the ticket on screen so the pharmacist can hand it over after calling
+        val card = cardFor(id)
+            ?: return Templates.card(PharmacistView(message = "Calling ticket $id."))
+        return Templates.card(PharmacistView(card = card, holding = true, message = "Calling ticket $id."))
+    }
 
     @POST
     @Path("dismiss/{id}")
@@ -127,30 +139,28 @@ class PharmacistResource(private val orderService: OrderService) {
     private fun role(raw: String?): PharmacistRole =
         raw?.uppercase()
             ?.let { runCatching { PharmacistRole.valueOf(it) }.getOrNull() }
-            ?: PharmacistRole.APPROVALS
+            ?: PharmacistRole.BOTH
 
-    /** The pharmacist's name/session id; defaults so plain `curl`/tests still work. */
-    private fun who(raw: String?): String = raw?.trim()?.takeIf { it.isNotEmpty() } ?: "pharmacist"
+    /** The console's id from its cookie; a fresh one if the cookie is missing (e.g. a bare `curl`). */
+    private fun who(console: String?): String =
+        console?.trim()?.takeIf { it.isNotEmpty() } ?: UUID.randomUUID().toString()
+
+    private fun consoleCookie(who: String): NewCookie =
+        NewCookie.Builder("console").value(who).path("/").httpOnly(true).maxAge(60 * 60 * 24).build()
 
     private fun cardFor(id: Long): OrderCard? =
         transactional {
             val order = Order.findById(id) ?: return@transactional null
-            OrderCard(
-                id = order.id!!,
-                code = order.prescriptionCode,
-                status = order.status.name,
-                lines = order.items.map { OrderLine(it.medication.name, it.amount) },
-            )
+            OrderCard(id = order.id!!, code = order.prescriptionCode, status = order.status.name, lines = order.lines())
         }
 
     private fun attention(): List<Attention> =
         transactional {
             Order.attentionOrders().map { order ->
-                Attention(
-                    id = order.id!!,
-                    status = order.status.name,
-                    lines = order.items.map { OrderLine(it.medication.name, it.amount) },
-                )
+                Attention(id = order.id!!, status = order.status.name, lines = order.lines())
             }
         }
+
+    /** The order's items as the console renders them. */
+    private fun Order.lines(): List<OrderLine> = items.map { OrderLine(it.medication.name, it.amount) }
 }

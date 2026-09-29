@@ -1,5 +1,6 @@
 package com.flowkode.pharma.service
 
+import com.flowkode.pharma.board.BoardTicket
 import io.smallrye.mutiny.Multi
 import io.smallrye.mutiny.operators.multi.processors.BroadcastProcessor
 import io.vertx.core.json.JsonObject
@@ -8,18 +9,18 @@ import org.eclipse.microprofile.reactive.messaging.Incoming
 
 /**
  * This instance's copy of every `orders.status` event, fanned out to the board's SSE clients.
- * The payload is ignored: the board reloads its state from the DB on any signal.
+ * The ticket data is forwarded as-is, so the board pushes it to browsers instead of re-fetching.
  */
 @ApplicationScoped
 class StatusStream {
 
     // Hot stream: every subscriber (every open SSE connection) sees every event.
-    private val changes = BroadcastProcessor.create<Unit>()
+    private val changes = BroadcastProcessor.create<BoardTicket>()
 
-    fun changes(): Multi<Unit> = changes
+    fun changes(): Multi<BoardTicket> = changes
 
     @Incoming("status-feed")
-    fun onStatus(@Suppress("UNUSED_PARAMETER") payload: JsonObject) {
-        changes.onNext(Unit)
+    fun onStatus(payload: JsonObject) {
+        changes.onNext(payload.mapTo(BoardTicket::class.java))
     }
 }

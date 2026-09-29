@@ -23,14 +23,14 @@ import org.junit.jupiter.api.Test
 @QuarkusTest
 class PharmacistResourceTest {
 
+    private val WHO = "test-console"
+
     @Inject
     lateinit var orderService: OrderService
 
     @Inject
     lateinit var packagerService: PackagerService
 
-    @Suppress("PropertyName")
-    private val WHO = "tester"
 
     private val seededStock = mapOf(1L to 5L, 2L to 10L, 3L to 15L, 4L to 20L, 5L to 25L)
 
@@ -61,7 +61,7 @@ class PharmacistResourceTest {
 
     @Test
     fun takeReturnsAnOrderCard() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
 
         given()
             .`when`().post("/pharmacist/take?role=APPROVALS")
@@ -73,7 +73,7 @@ class PharmacistResourceTest {
 
     @Test
     fun takeReturnsNothingForDeliveries() {
-        orderService.create("P-10000")
+        orderService.create("P-100000")
 
         given()
             .`when`().post("/pharmacist/take?role=DELIVERIES")
@@ -84,7 +84,7 @@ class PharmacistResourceTest {
 
     @Test
     fun approveMovesTheOrder() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
         orderService.claimNext(PharmacistRole.APPROVALS, WHO)
 
         given()
@@ -98,7 +98,7 @@ class PharmacistResourceTest {
 
     @Test
     fun deliveryTakeShowsHandoverAndCompletes() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
         orderService.claimNext(PharmacistRole.APPROVALS, WHO)
         orderService.approve(ticket)
         transactional {
@@ -106,6 +106,7 @@ class PharmacistResourceTest {
         }
 
         given()
+            .cookie("console", WHO)
             .`when`()
             .post("/pharmacist/take?role=DELIVERIES")
             .then()
@@ -114,6 +115,7 @@ class PharmacistResourceTest {
             .body(containsString("Handed over"))
 
         given()
+            .cookie("console", WHO)
             .`when`()
             .post("/pharmacist/handover/$ticket")
             .then()
@@ -125,7 +127,7 @@ class PharmacistResourceTest {
 
     @Test
     fun countsShowsWaiting() {
-        orderService.create("P-10000")
+        orderService.create("P-100000")
 
         given()
             .`when`().get("/pharmacist/counts?role=APPROVALS")
@@ -136,13 +138,13 @@ class PharmacistResourceTest {
 
     @Test
     fun countsForBothAddsApprovalsAndDeliveries() {
-        val ready = (orderService.create("P-20000") as OrderResult.Placed).ticket
+        val ready = (orderService.create("P-200000") as OrderResult.Placed).ticket
         orderService.claimNext(PharmacistRole.APPROVALS, WHO)
         orderService.approve(ready)
         transactional {
             Order.doTransition(ready, PrescriptionStatus.PACKAGING, PrescriptionStatus.READY)
         }
-        orderService.create("P-10000") // stays AWAITING_APPROVAL
+        orderService.create("P-100000") // stays AWAITING_APPROVAL
 
         given()
             .`when`()
@@ -154,47 +156,60 @@ class PharmacistResourceTest {
 
     @Test
     fun callPatientMarksTheTicketCalled() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
         orderService.claimNext(PharmacistRole.APPROVALS, WHO)
         orderService.approve(ticket)
         transactional { Order.doTransition(ticket, PrescriptionStatus.PACKAGING, PrescriptionStatus.READY) }
 
         // the pharmacist takes (claims) it before calling
-        given().`when`().post("/pharmacist/take?role=DELIVERIES&who=$WHO").then().statusCode(200)
+        given().cookie("console", WHO).`when`().post("/pharmacist/take?role=DELIVERIES").then().statusCode(200)
 
         given()
-            .`when`().post("/pharmacist/call/$ticket?who=$WHO")
+            .cookie("console", WHO)
+            .`when`().post("/pharmacist/call/$ticket")
             .then()
             .statusCode(200)
             .body(containsString("Calling ticket $ticket"))
+            // the ticket stays on screen so the pharmacist can hand it over next
+            .body(containsString("Ticket $ticket"))
+            .body(containsString("Handed over"))
+
+        // calling again is a harmless no-op: the card stays, no "order changed" message
+        given()
+            .cookie("console", WHO)
+            .`when`().post("/pharmacist/call/$ticket")
+            .then()
+            .statusCode(200)
+            .body(containsString("Ticket $ticket"))
+            .body(not(containsString("That order changed")))
 
         transactional { assertNotNull(Order.findById(ticket)!!.calledAt) }
     }
 
     @Test
     fun consoleDisablesTakeNextWhileHoldingAnOrder() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
 
         // first console view: nothing held yet
-        given().`when`().get("/pharmacist?role=APPROVALS&who=$WHO")
+        given().cookie("console", WHO).`when`().get("/pharmacist?role=APPROVALS")
             .then().statusCode(200)
             .body(not(containsString("disabled")))
 
         // take an order, then the console must disable "Take next"
-        given().`when`().post("/pharmacist/take?role=APPROVALS&who=$WHO").then().statusCode(200)
+        given().cookie("console", WHO).`when`().post("/pharmacist/take?role=APPROVALS").then().statusCode(200)
 
-        given().`when`().get("/pharmacist?role=APPROVALS&who=$WHO")
+        given().cookie("console", WHO).`when`().get("/pharmacist?role=APPROVALS")
             .then().statusCode(200)
             .body(containsString("disabled"))
     }
 
     @Test
     fun takingWhileHoldingReturnsTheSameOrderAgain() {
-        val ticket = (orderService.create("P-10000") as OrderResult.Placed).ticket
+        val ticket = (orderService.create("P-100000") as OrderResult.Placed).ticket
 
-        val first = given().`when`().post("/pharmacist/take?role=APPROVALS&who=$WHO")
+        val first = given().cookie("console", WHO).`when`().post("/pharmacist/take?role=APPROVALS")
             .then().statusCode(200).extract().asString()
-        val second = given().`when`().post("/pharmacist/take?role=APPROVALS&who=$WHO")
+        val second = given().cookie("console", WHO).`when`().post("/pharmacist/take?role=APPROVALS")
             .then().statusCode(200).extract().asString()
 
         assertTrue(first.contains("Ticket $ticket"))
@@ -202,13 +217,28 @@ class PharmacistResourceTest {
 
         transactional {
             assertEquals(1L, Order.count("status = ?1", PrescriptionStatus.IN_REVIEW))
-            assertEquals(WHO, Order.findById(ticket)!!.claimedBy)
+            assertNotNull(Order.findById(ticket)!!.claimedAt)
         }
+    }
+
+    /** Two consoles are independent: each can hold its own order (the bug this fixes). */
+    @Test
+    fun twoConsolesHoldDifferentOrders() {
+        val a = (orderService.create("P-100000") as OrderResult.Placed).ticket
+        val b = (orderService.create("P-010000") as OrderResult.Placed).ticket
+
+        val console1 = given().cookie("console", "console-1").`when`().post("/pharmacist/take?role=APPROVALS")
+            .then().statusCode(200).extract().asString()
+        val console2 = given().cookie("console", "console-2").`when`().post("/pharmacist/take?role=APPROVALS")
+            .then().statusCode(200).extract().asString()
+
+        assertTrue(console1.contains("Ticket $a"))
+        assertTrue(console2.contains("Ticket $b")) // not blocked by console-1's hold
     }
 
     @Test
     fun attentionListsProblemOrdersAndDismissRemovesThem() {
-        orderService.create("P-90000") // 9 Amoxicillin, only 5 on hand -> OUT_OF_STOCK
+        orderService.create("P-900000") // 9 Amoxicillin, only 5 on hand -> OUT_OF_STOCK
         val ticket = transactional {
             Order.find("status = ?1", PrescriptionStatus.OUT_OF_STOCK).firstResult()!!.id!!
         }

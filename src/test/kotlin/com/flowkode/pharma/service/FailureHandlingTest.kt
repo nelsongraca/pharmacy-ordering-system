@@ -18,6 +18,8 @@ import org.junit.jupiter.api.Test
 @QuarkusTest
 class FailureHandlingTest {
 
+    private val WHO = "test-console"
+
     @Inject
     lateinit var orderService: OrderService
 
@@ -27,8 +29,6 @@ class FailureHandlingTest {
     @Inject
     lateinit var deadLetterService: DeadLetterService
 
-    @Suppress("PropertyName")
-    private val WHO = "tester"
 
     private val seededStock = mapOf(1L to 5L, 2L to 10L, 3L to 15L, 4L to 20L, 5L to 25L)
 
@@ -49,22 +49,22 @@ class FailureHandlingTest {
 
     @Test
     fun sourceOutageIsReportedAndCreatesNothing() {
-        assertEquals(OrderResult.Unavailable, orderService.create("P-99999"))
+        assertEquals(OrderResult.Unavailable, orderService.create("P-999999"))
 
         transactional { assertEquals(0L, Order.count()) }
     }
 
     @Test
     fun duplicateActivePrescriptionIsRejected() {
-        assertTrue(orderService.create("P-10000") is OrderResult.Placed)
+        assertTrue(orderService.create("P-100000") is OrderResult.Placed)
 
-        assertEquals(OrderResult.AlreadyActive, orderService.create("P-10000"))
+        assertEquals(OrderResult.AlreadyActive, orderService.create("P-100000"))
         transactional { assertEquals(1L, Order.count()) }
     }
 
     @Test
     fun packagerFailureEndsFailedAndReleasesStockOnce() {
-        val ticket = (orderService.create("P-00009") as OrderResult.Placed).ticket // 9 of medication 5
+        val ticket = (orderService.create("P-000009") as OrderResult.Placed).ticket // 9 of medication 5
         orderService.claimNext(PharmacistRole.APPROVALS, WHO)
         orderService.approve(ticket)
 
